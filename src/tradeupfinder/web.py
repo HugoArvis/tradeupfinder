@@ -107,7 +107,7 @@ class Batch:
 class InventoryJob:
     """Calcul des contrats realisables avec l'inventaire, en tache de fond.
 
-    Meme raison qu'un plan : valoriser les objets possedes demande une requete
+    Meme raison qu'un balayage : valoriser les objets possedes demande une requete
     CSFloat par nom de marche, donc des minutes. Une requete HTTP bloquante
     donnerait une page figee.
     """
@@ -488,7 +488,8 @@ class App:
         mort n'est pas un candidat moins bon, c'est une perte : le presenter
         dans une liste de recommandations, meme dernier, invite a le lire
         comme une option. Rien n'est perdu pour autant -- tous les plans sont
-        enregistres au journal, l'onglet Historique les retrouve.
+        enregistres au journal, la liste "Plans calcules" de Mes contrats les
+        retrouve.
         """
         retenus = [d for d in batch.done
                    if d.get("profitability", 0.0) >= SEUIL_PROFITABLE]
@@ -643,8 +644,9 @@ class Handler(BaseHTTPRequestHandler):
         elif route.path == "/api/latest":
             # Ce que la nuit a trouve. Aucune requete, aucune attente : un
             # balayage complet dure plus d'une heure, il n'a pas a etre refait
-            # parce qu'on ouvre la page.
-            rarity = (params.get("rarity") or ["industrial"])[0]
+            # parce qu'on ouvre la page. Mil-Spec par defaut : c'est la rarete
+            # que balayage_nuit.cmd calcule.
+            rarity = (params.get("rarity") or ["mil-spec"])[0]
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
@@ -1061,8 +1063,8 @@ vertical-align:-2px;margin-right:7px}
       <label>Rareté d’entrée
         <select id="rarity">
           <option value="consumer">Consumer</option>
-          <option value="industrial" selected>Industrial</option>
-          <option value="mil-spec">Mil-Spec</option>
+          <option value="industrial">Industrial</option>
+          <option value="mil-spec" selected>Mil-Spec</option>
           <option value="restricted">Restricted</option>
           <option value="classified">Classified</option>
         </select>

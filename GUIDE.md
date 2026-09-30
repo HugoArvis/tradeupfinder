@@ -40,28 +40,36 @@ Une seule commande, puis tout se fait à la souris :
 python -m tradeupfinder.web
 ```
 
-Votre navigateur s'ouvre sur la liste des collections. Vous choisissez la
-rareté, filtrez par nombre de sorties, cliquez sur **Calculer** — et le plan
-s'affiche avec les 10 annonces et leurs boutons d'achat.
+Votre navigateur s'ouvre sur l'onglet **Calculer**, qui montre les contrats
+rentables trouvés par le dernier balayage pour la rareté choisie. Rien n'est
+recalculé à l'ouverture : un balayage complet dure plus d'une heure, il se fait
+la nuit (`python -m tradeupfinder.cli schedule` le planifie sur cette machine,
+via `scripts\balayage_nuit.cmd`). Seuls les contrats au-dessus du point mort sont
+affichés — les autres sont perdants, il n'y a rien à en faire.
 
-Les collections à **une seule sortie** (résultat certain) sont en tête de liste
-et marquées d'un badge. La colonne **Requêtes** indique ce que le calcul coûtera
-en appels CSFloat, avant de le lancer : c'est ce qui vous évite d'épuiser le
-quota en enchaînant les essais.
+En haut, un bandeau résume la situation : la profitabilité de chaque contrat
+(barre hachurée quand le tirage peut faire perdre), les chances de gagner du
+meilleur, leur nombre et le meilleur gain.
 
-Le calcul prend quelques minutes ; la page affiche un chronomètre et reste
-utilisable. `Ctrl+C` dans le terminal arrête le serveur.
+Chaque contrat tient sur une carte : profitabilité, coût, revente nette, gain,
+chances de gagner, puis **« Comment acheter les 10 entrées »**, qui compare les
+voies d'approvisionnement (annonces CSFloat, ordre d'achat Steam, prix affiché
+Steam). Les 10 annonces avec leurs boutons d'achat, les prix d'ordre et les
+sorties possibles sont repliés en dessous.
+
+`Ctrl+C` dans le terminal arrête le serveur.
 
 > L'application n'écoute que sur `127.0.0.1` : elle détient votre clé API, elle
 > n'a rien à faire sur le réseau. Personne d'autre ne peut y accéder.
 
-### Tout balayer
+### Relancer un balayage
 
-Le bouton **« Tout calculer pour cette rareté »** enchaîne toutes les
-collections affichées, une par une, et enregistre chaque plan au journal. Les
-résultats s'affichent au fil de l'eau, classés par profit décroissant.
+Le bouton **« Relancer maintenant »** cote toutes les collections de la rareté,
+une par une, et enregistre chaque plan au journal. Les contrats rentables
+s'affichent au fil de l'eau, classés par profitabilité, et le cadran du bandeau
+suit l'avancement. **Arrêter** interrompt le balayage.
 
-L'estimation de coût est indiquée avant de lancer. Ordres de grandeur :
+Le coût en requêtes CSFloat est indiqué avant de lancer. Ordres de grandeur :
 
 | Rareté | Collections | Requêtes | Durée |
 |---|---|---|---|
@@ -73,13 +81,9 @@ L'estimation de coût est indiquée avant de lancer. Ordres de grandeur :
 met en pause, affiche « reprise dans N secondes », et repart tout seul. La
 collection en cours n'est pas perdue, elle est retentée.
 
-Réduisez le champ avec « Sorties max » si vous voulez des résultats plus vite :
-les collections à 1 ou 2 sorties sont de toute façon celles qui vous
-intéressent le plus.
+### Trois onglets
 
-### Quatre onglets
-
-**Calculer** — la liste des collections et le lancement des plans.
+**Calculer** — les contrats rentables du dernier balayage, et la relance.
 
 **Mon inventaire** — les contrats réalisables avec les skins que vous possédez
 déjà. Les entrées y sont valorisées à ce qu'elles rapporteraient **revendues** :
@@ -88,19 +92,26 @@ dans le calcul — c'est déjà dépensé quoi que vous décidiez. Conséquence 
 accepter : des contrats qui semblaient gratuits apparaissent perdants. Ils
 l'étaient déjà, le coût était seulement invisible.
 
-**Historique des plans** — tout plan calculé y est conservé automatiquement. Il
-a coûté des requêtes CSFloat, autant pouvoir le retrouver. Le bouton **Suivre**
-en fait un contrat.
-
-**Mes contrats** — le suivi de ce que vous avez réellement acheté.
+**Mes contrats** — le suivi de ce que vous avez réellement acheté, et en bas la
+liste **Plans calculés** : tout plan y est conservé automatiquement, puisqu'il a
+coûté des requêtes CSFloat. **Voir** le rouvre (un bouton ramène ensuite à la
+liste), **Suivre** en fait un contrat.
 
 ### Suivre un contrat
 
 C'est ce qui répond au problème de plusieurs trade-ups menés de front.
 
-Chaque contrat liste ses 10 objets. Quand vous en achetez un, cliquez
-**Acheté** : on vous demande le prix et le float **réels**, qui peuvent différer
-du plan si vous avez pris un substitut.
+Les contrats suivis se rangent en colonnes selon leur avancement : **À
+acheter**, **Achats en cours**, **Verrou 7 jours**, **Exécutables**. Le contrat
+exécutable est mis en avant sur une carte foncée. Le bandeau du haut montre,
+jour par jour sur la semaine à venir, quand chaque contrat en verrou deviendra
+exécutable : c'est le jour où revenir.
+
+Cliquez sur un contrat pour l'ouvrir en entier. Quand vous achetez un objet,
+cliquez **Acheté** : on vous demande le prix et le float **réels**, qui peuvent
+différer du plan si vous avez pris un substitut. **Annuler l'achat** revient en
+arrière ; **Marquer réalisé**, **Abandonner** et **Supprimer** agissent sur le
+contrat entier. **Annuler** (ou Échap) ferme la fenêtre.
 
 L'application affiche alors :
 
