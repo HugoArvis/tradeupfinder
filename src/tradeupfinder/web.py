@@ -47,7 +47,6 @@ from .pricing.cache import QuoteCache
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .pricing.steam import SteamMarket
-from .report import render as render_report
 
 log = logging.getLogger(__name__)
 
@@ -71,24 +70,6 @@ def libelle_rarete(nom: str | None) -> str:
     """
     rarete = RARITES.get(str(nom or ""))
     return rarete.label if rarete else str(nom or "")
-
-
-@dataclass
-class Job:
-    """Un calcul de plan en cours ou termine."""
-
-    id: str
-    collection_id: str
-    rarity: str
-    state: str = "running"  # running | done | empty | error | quota
-    started: float = field(default_factory=time.time)
-    plan: Plan | None = None
-    plan_id: str | None = None
-    message: str = ""
-
-    @property
-    def elapsed(self) -> float:
-        return time.time() - self.started
 
 
 @dataclass
@@ -157,7 +138,6 @@ class App:
         self.db = db
         self._api_key = api_key  # jamais expose
         self.rate = rate
-        self.jobs: dict[str, Job] = {}
         self.batches: dict[str, Batch] = {}
         self.inventory_jobs: dict[str, InventoryJob] = {}
         # L'inventaire coute une requete a lire et ne bouge pas entre deux
@@ -403,52 +383,10 @@ class App:
             "gaps": job.gaps,
         }
 
-    def start_plan(self, collection_id: str, rarity_name: str) -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], collection_id=collection_id,
-                  rarity=rarity_name)
-        with self._lock:
-            self.jobs[job.id] = job
-        threading.Thread(target=self._run, args=(job,), daemon=True).start()
-        return job
-
-    def _run(self, job: Job) -> None:
-        try:
-            self.load_currency()
-            col = self.db.collection(job.collection_id)
-            source = CSFloat(self._api_key, calls_per_minute=self.rate)
-            plan = build_plan(self.db, col, RARITES[job.rarity], source,
-                              sell_source=self.revente(), sell_fees=STEAM,
-                              sell_to_usd=1.0 / self.rate_usd)
-            if plan is None:
-                job.state = "empty"
-                job.message = "Pas assez d'annonces en vente pour composer un panier."
-            else:
-                job.plan = plan
-                job.state = "done"
-                # Tout plan calcule entre au journal : il a coute des requetes,
-                # et on veut pouvoir le retrouver meme sans l'avoir suivi.
-                job.plan_id = self.journal.save_plan(
-                    self.job_payload(job)["plan"],
-                    collection_id=job.collection_id,
-                    rarity=job.rarity,
-                )
-        except RateLimited:
-            job.state = "quota"
-            job.message = (
-                "Quota CSFloat epuise. Il porte sur une fenetre longue : "
-                "relancer tout de suite ne sert a rien, attendez 5 a 10 minutes."
-            )
-        except Exception as exc:  # noqa: BLE001 - l'UI doit survivre a tout
-            log.exception("Plan %s en echec", job.id)
-            job.state = "error"
-            job.message = f"{type(exc).__name__} : {exc}"
-
     # --- Balayage complet ----------------------------------------------------
 
-    def start_batch(self, rarity_name: str, *, max_outcomes: int | None = None) -> Batch:
+    def start_batch(self, rarity_name: str) -> Batch:
         cols = self.collections(rarity_name)
-        if max_outcomes is not None:
-            cols = [c for c in cols if c["outcomes"] <= max_outcomes]
         batch = Batch(
             id=uuid.uuid4().hex[:12],
             rarity=rarity_name,
@@ -572,20 +510,6 @@ class App:
             "failed": batch.failed[-10:],
         }
 
-    def job_payload(self, job: Job) -> dict:
-        base = {
-            "id": job.id,
-            "state": job.state,
-            "elapsed": round(job.elapsed),
-            "message": job.message,
-            "plan_id": job.plan_id,
-        }
-        if job.state != "done" or job.plan is None:
-            return base
-
-        base["plan"] = self._plan_dict(job.plan)
-        return base
-
     def _plan_dict(self, plan: Plan) -> dict:
         """Serialise un plan, montants convertis dans la devise du compte.
 
@@ -680,12 +604,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "rarete inconnue"}, 400)
                 return
             self._json({"collections": self.app.collections(rarity)})
-        elif route.path.startswith("/api/job/"):
-            job = self.app.jobs.get(route.path.rsplit("/", 1)[-1])
-            if job is None:
-                self._json({"error": "tache inconnue"}, 404)
-                return
-            self._json(self.app.job_payload(job))
         elif route.path == "/api/status":
             # Deux requetes CSFloat au plus, une fois par processus, et elles
             # ne cotent aucun objet. C'est le prix d'une en-tete qui dit vrai :
@@ -757,13 +675,6 @@ class Handler(BaseHTTPRequestHandler):
                     for c in self.app.journal.contracts(include_done=not actifs)
                 ]
             })
-        elif route.path.startswith("/report/"):
-            job = self.app.jobs.get(route.path.rsplit("/", 1)[-1])
-            if job is None or job.plan is None:
-                self._send(404, b"rapport indisponible", "text/plain; charset=utf-8")
-                return
-            html = render_report(job.plan)
-            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         else:
             self._send(404, b"introuvable", "text/plain; charset=utf-8")
 
@@ -791,10 +702,7 @@ class Handler(BaseHTTPRequestHandler):
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
-            maxi = corps.get("max_outcomes")
-            batch = self.app.start_batch(
-                rarity, max_outcomes=int(maxi) if maxi else None
-            )
+            batch = self.app.start_batch(rarity)
             self._json({"batch": batch.id, "total": batch.total})
             return
         if chemin == "/api/batch/stop":
@@ -845,18 +753,7 @@ class Handler(BaseHTTPRequestHandler):
                     j.set_notes(cid, corps["notes"])
             self._json({"ok": True})
             return
-        if chemin != "/api/plan":
-            self._send(404, b"introuvable", "text/plain; charset=utf-8")
-            return
-
-        cid, rarity = corps.get("collection"), corps.get("rarity", "mil-spec")
-        if not cid or cid not in self.app.db.collections:
-            self._json({"error": "collection inconnue"}, 400)
-            return
-        if rarity not in RARITES:
-            self._json({"error": "rarete inconnue"}, 400)
-            return
-        self._json({"job": self.app.start_plan(cid, rarity).id})
+        self._send(404, b"introuvable", "text/plain; charset=utf-8")
 
 
 def serve(*, host: str = "127.0.0.1", port: int = 8765, rate: int = 10,
