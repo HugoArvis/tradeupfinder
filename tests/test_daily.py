@@ -20,7 +20,6 @@ from tradeupfinder.daily import (
     Ligne,
     Passage,
     age_max,
-    historique,
     journaliser,
     noms_prioritaires,
     recoter,
@@ -224,8 +223,11 @@ def test_le_journal_rend_la_derive_lisible(tmp_path):
         p.lignes.append(Ligne("The Italy Collection", 0.90, 0.85, prof, 0.67, 600))
         journaliser(p, chemin)
 
-    serie = historique(chemin, "The Italy Collection")
-    assert [round(v, 2) for _, v in serie] == [0.99, 0.84]
+    passages = [json.loads(ligne) for ligne in
+                chemin.read_text(encoding="utf-8").splitlines()]
+    serie = [c["profitabilite"] for d in passages for c in d["candidats"]
+             if c["collection"] == "The Italy Collection"]
+    assert [round(v, 2) for v in serie] == [0.99, 0.84]
 
 
 def test_le_journal_sempile_sans_ecraser(tmp_path):
@@ -233,19 +235,6 @@ def test_le_journal_sempile_sans_ecraser(tmp_path):
     for _ in range(3):
         journaliser(Passage(rarity="industrial"), chemin)
     assert len(chemin.read_text(encoding="utf-8").strip().splitlines()) == 3
-
-
-def test_une_ligne_de_journal_illisible_ne_casse_pas_la_lecture(tmp_path):
-    """Un fichier tronque par un arret brutal doit rester exploitable."""
-    chemin = Path(tmp_path) / "p.jsonl"
-    p = Passage(rarity="industrial")
-    p.lignes.append(Ligne("A", 1.0, 1.0, 1.0, 1.0, 60))
-    journaliser(p, chemin)
-    with chemin.open("a", encoding="utf-8") as f:
-        f.write('{"horodatage": tronq\n')
-    journaliser(p, chemin)
-
-    assert len(historique(chemin, "A")) == 2
 
 
 def test_le_resume_distingue_zero_candidat_dun_budget_epuise():

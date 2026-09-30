@@ -1,16 +1,13 @@
 """Cache disque des releves de prix (SQLite).
 
-Deux roles :
-  - eviter de retaper l'API Steam, qui est severement rate-limitee ;
-  - garder un historique, utile pour reperer les prix instables avant de
-    valider un trade-up.
+Evite de retaper l'API Steam, qui est severement rate-limitee. Chaque
+releve garde sa date : c'est son age qui decide s'il est encore servi.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import time
-from collections.abc import Iterable
 from pathlib import Path
 
 from .base import Quote
@@ -88,20 +85,6 @@ class QuoteCache:
             ),
         )
         self._conn.commit()
-
-    def put_many(self, quotes: Iterable[Quote]) -> None:
-        for q in quotes:
-            self.put(q)
-
-    def history(self, name: str, source: str, limit: int = 50) -> list[Quote]:
-        rows = self._conn.execute(
-            """SELECT market_hash_name, source, lowest_price, median_price,
-                      volume, currency, fetched_at
-               FROM quotes WHERE market_hash_name = ? AND source = ?
-               ORDER BY fetched_at DESC LIMIT ?""",
-            (name, source, limit),
-        ).fetchall()
-        return [_row_to_quote(r) for r in rows]
 
     def prune(self, older_than_days: float = 30) -> int:
         cutoff = time.time() - older_than_days * 86400

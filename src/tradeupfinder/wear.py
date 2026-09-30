@@ -67,21 +67,6 @@ def output_wear(avg_normalized_float: float, target: Skin) -> Wear:
     return wear_of(output_float(avg_normalized_float, target))
 
 
-def required_average_for_wear(target: Skin, wear: Wear) -> tuple[float, float] | None:
-    """Intervalle de moyennes d'entree donnant `wear` sur `target`.
-
-    Renvoie ``(lo, hi)`` en moyenne d'entree, avec `hi` exclusif, ou ``None``
-    si ce palier est inatteignable pour ce skin.
-    """
-    lo_f = max(wear.lo, target.min_float)
-    hi_f = min(wear.hi, target.max_float)
-    if lo_f >= hi_f:
-        return None
-    lo_avg = (lo_f - target.min_float) / target.float_span
-    hi_avg = (hi_f - target.min_float) / target.float_span
-    return (max(0.0, lo_avg), min(1.0, hi_avg))
-
-
 def wear_breakpoints(targets: Iterable[Skin]) -> list[float]:
     """Moyennes d'entree ou l'usure d'au moins un skin de sortie change.
 

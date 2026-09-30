@@ -648,8 +648,9 @@ tentative mourait en 80 secondes sur la première cotation non mise en cache.
 Steam renvoie par ailleurs `success=true` **sans aucun champ de prix** pour un
 objet sans annonce : `Quote.is_empty` distingue ce cas d'une erreur.
 
-Steam limite à ~15 req/min et ne donne aucun float. `SteamMarket.order_book()`
-est mort, mais pas pour la raison qu'on croit : **l'endpoint
+Steam limite à ~15 req/min et ne donne aucun float. Son carnet d'ordres est
+inaccessible — `SteamMarket.order_book()`, qui le lisait, a été retiré — mais
+pas pour la raison qu'on croit : **l'endpoint
 `itemordershistogram` répond toujours** (`success=1`, `highest_buy_order`
 renseigné, vérifié en septembre 2026). C'est la table nom → `item_nameid` qui
 est perdue — les pages marché sont devenues une application cliente qui adresse

@@ -105,9 +105,6 @@ class Recipe:
     def total(self) -> int:
         return sum(n for _, n in self.counts)
 
-    def as_dict(self) -> dict[str, int]:
-        return dict(self.counts)
-
     def label(self, db: SkinDatabase) -> str:
         return " + ".join(
             f"{n}x {db.collection(cid).name}" for cid, n in self.counts

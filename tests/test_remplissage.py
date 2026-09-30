@@ -32,7 +32,7 @@ def contrat_de_test(j, n=10):
     plan = {
         "collection": "The Arabesque Collection", "cost": 4.83, "net": 6.17,
         "profit": 1.34, "roi": 0.28, "avg_float": 0.13,
-        "inputs": [{"name": f"Sawed-Off | Lunar Wyrm (Minimal Wear)",
+        "inputs": [{"name": "Sawed-Off | Lunar Wyrm (Minimal Wear)",
                     "float": 0.13, "price": 0.49, "url": None}
                    for _ in range(n)],
         "outcomes": [],

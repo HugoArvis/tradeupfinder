@@ -43,7 +43,6 @@ class Listing:
     market_hash_name: str
     price: float  # USD, converti depuis les centimes renvoyes par l'API
     float_value: float | None
-    paint_seed: int | None
     stickers: int = 0
     keychains: int = 0
 
@@ -84,7 +83,6 @@ def _vers_listing(row: object, nom_par_defaut: str) -> Listing | None:
         float_value=(
             float(item["float_value"]) if item.get("float_value") is not None else None
         ),
-        paint_seed=item.get("paint_seed"),
         stickers=len(item.get("stickers") or ()),
         keychains=len(item.get("keychains") or ()),
     )

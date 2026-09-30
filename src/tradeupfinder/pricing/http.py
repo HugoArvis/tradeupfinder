@@ -103,7 +103,7 @@ class HttpClient:
                 if exc.code == 429:
                     raise RateLimited(f"429 persistant sur {url}") from exc
                 raise
-            except (urllib.error.URLError, TimeoutError) as exc:
+            except (urllib.error.URLError, TimeoutError):
                 if attempt < self.max_retries:
                     time.sleep(self.backoff_base * (2**attempt))
                     continue
