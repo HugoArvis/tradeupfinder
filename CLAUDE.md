@@ -54,7 +54,7 @@ ouvre la pull request avec la bonne base.
 ```bash
 python -m pip install -e ".[dev]"     # `pip` seul vise Python 3.9, pas 3.11
 python -m scripts.build_db            # (re)construit data/collections.json
-python -m pytest -q                   # 150 tests, < 15 s
+python -m pytest -q                   # ~390 tests, < 15 s
 python -m pytest tests/test_core.py -k probabilites
 python scripts/check_js.py            # apres toute retouche du JS de web.py
 python -m tradeupfinder.web                 # application locale, port 8765
