@@ -1106,11 +1106,11 @@ vertical-align:-2px;margin-right:7px}
     </div>
   </section>
   <div class="card">
-    <p class="muted">Contrats realisables avec les skins que vous possedez deja.
-    Les entrees sont valorisees a ce qu'elles rapporteraient <b>revendues</b> :
-    fondre un skin, c'est renoncer a le vendre. Le prix que vous l'avez paye
-    n'entre pas dans le calcul &mdash; il est deja depense quoi que vous
-    decidiez.</p>
+    <p class="muted">Contrats réalisables avec les skins que vous possédez déjà.
+    Les entrées sont valorisées à ce qu’elles rapporteraient <b>revendues</b> :
+    fondre un skin, c’est renoncer à le vendre. Le prix que vous l’avez payé
+    n’entre pas dans le calcul &mdash; il est déjà dépensé quoi que vous
+    décidiez.</p>
     <div id="inv-bilan" class="muted">chargement&hellip;</div>
     <div class="row" style="border-top:1px solid var(--line);padding-top:12px;
       margin:12px 0 0">
@@ -1132,12 +1132,12 @@ vertical-align:-2px;margin-right:7px}
   </section>
   <div id="contrats" class="kanban"></div>
   <div class="card">
-    <div class="etape">Plans calcules</div>
-    <p class="muted">Tout plan calcule est conserve : il a coute des requetes.
+    <div class="etape">Plans calculés</div>
+    <p class="muted">Tout plan calculé est conservé : il a coûté des requêtes.
     &laquo;&nbsp;Suivre&nbsp;&raquo; en fait un contrat auquel rattacher vos
-    achats reels.</p>
+    achats réels.</p>
     <div class="scroll"><table>
-      <thead><tr><th>Date</th><th>Collection</th><th class="num">Cout</th>
+      <thead><tr><th>Date</th><th>Collection</th><th class="num">Coût</th>
         <th class="num">Profit</th><th class="num">Rendement</th>
         <th class="num">Suivis</th><th></th></tr></thead>
       <tbody id="histo"></tbody>
@@ -1747,7 +1747,7 @@ async function histo() {
     <td class="num">${p.followed || '-'}</td>
     <td><button class="ghost sm" data-voir="${p.id}">Voir</button>
         <button class="sm" data-follow="${p.id}">Suivre</button></td></tr>`).join('')
-    : '<tr><td colspan="7" class="muted">aucun plan calcule pour le moment</td></tr>';
+    : '<tr><td colspan="7" class="muted">aucun plan calculé pour le moment</td></tr>';
 }
 
 // --- Contrats suivis, en colonnes -------------------------------------------
@@ -1815,10 +1815,10 @@ function quandContrat(c) {
 function deriveContrat(c) {
   if (c.float_drift === null || c.float_drift === undefined) return '';
   const gros = Math.abs(c.float_drift) > 0.003;
-  return '<div class="' + (gros ? 'warn' : 'muted') + '">Float moyen reel : <b>' +
-    c.actual_avg_float.toFixed(4) + '</b> (prevu ' + c.planned_avg_float.toFixed(4) +
-    ', ecart ' + (c.float_drift >= 0 ? '+' : '') + c.float_drift.toFixed(4) + ')' +
-    (gros ? ' &mdash; verifiez que la sortie n&rsquo;a pas change de palier.' : '') +
+  return '<div class="' + (gros ? 'warn' : 'muted') + '">Float moyen réel : <b>' +
+    c.actual_avg_float.toFixed(4) + '</b> (prévu ' + c.planned_avg_float.toFixed(4) +
+    ', écart ' + (c.float_drift >= 0 ? '+' : '') + c.float_drift.toFixed(4) + ')' +
+    (gros ? ' &mdash; vérifiez que la sortie n&rsquo;a pas changé de palier.' : '') +
     '</div>';
 }
 
@@ -1843,11 +1843,11 @@ function detailContrat(c) {
   const lignes = c.items.map(i => {
     const verrou = i.purchased
       ? (i.locked ? 'jusqu&rsquo;au ' + dt(i.tradable_at) : 'libre')
-      : '<span class="muted">non achete</span>';
+      : '<span class="muted">non acheté</span>';
     const actions = i.purchased
       ? '<button class="ghost sm" data-item="' + i.id + '" data-act="annuler">Annuler l’achat</button>'
       : (i.url ? '<a class="buy" href="' + i.url + '" target="_blank">Acheter</a> ' : '') +
-        '<button class="sm" data-item="' + i.id + '" data-act="acheter">Achete</button>';
+        '<button class="sm" data-item="' + i.id + '" data-act="acheter">Acheté</button>';
     return '<tr class="' + (i.purchased ? 'done' : '') + '"><td>' + i.name +
       (i.from_plan ? '' : ' <span class="tag">substitut</span>') +
       '</td><td class="num">' + i.float.toFixed(4) +
@@ -1951,9 +1951,9 @@ document.addEventListener('click', async e => {
   if (it) {
     const corps = {item: it.dataset.item, action: it.dataset.act};
     if (it.dataset.act === 'acheter') {
-      const p = prompt('Prix reellement paye (vide = prix du plan)');
+      const p = prompt('Prix réellement payé (vide = prix du plan)');
       if (p) corps.price = p;
-      const fl = prompt('Float reel (vide = float du plan)');
+      const fl = prompt('Float réel (vide = float du plan)');
       if (fl) corps.float = fl;
     }
     await fetch('/api/item', {method: 'POST',
