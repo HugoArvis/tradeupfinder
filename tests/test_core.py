@@ -8,7 +8,7 @@ import pytest
 
 from tradeupfinder.ev import InputItem, evaluate, outcome_probabilities
 from tradeupfinder.fees import steam_net_proceeds
-from tradeupfinder.generator import InputOption, cheapest_selection
+from tradeupfinder.generator import InputOption, Recipe, _select_across_collections
 from tradeupfinder.models import Rarity, Skin, Wear
 from tradeupfinder.pricing.base import parse_money, parse_volume
 from tradeupfinder.pricing.repository import StaticPricer
@@ -209,6 +209,12 @@ def test_evaluate_refuse_un_lot_invalide():
 
 
 # --- Selection des entrees ---------------------------------------------------
+
+
+def cheapest_selection(options, count, float_budget):
+    """Selection d'une recette mono-collection : le chemin qu'emprunte `scan`."""
+    recette = Recipe(counts=(("col", count),), rarity=Rarity.MIL_SPEC)
+    return _select_across_collections(recette, {"col": list(options)}, float_budget)
 
 
 def test_cheapest_selection_respecte_le_budget_de_float():

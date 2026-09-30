@@ -87,14 +87,6 @@ class Ligne:
                 and self.confirmee >= 1.0
                 and self.frais)
 
-    @property
-    def ecart_confirmation(self) -> float | None:
-        """De combien `scan` s'est-il trompe ? Negatif = il etait optimiste."""
-        if self.confirmee is None:
-            return None
-        return self.confirmee - self.profitability
-
-
 @dataclass
 class Passage:
     """Ce qu'un passage quotidien a fait et trouve."""

@@ -305,12 +305,11 @@ def test_une_piste_confirmee_perdante_nest_pas_achetable():
     """Le cas Bank exactement : 158 % en piste, 99.7 % en reel."""
     x = Ligne("Bank", 1.17, 1.17, 1.58, 1.0, age_max=600, confirmee=0.997)
     assert not x.actionnable
-    assert x.ecart_confirmation < 0        # scan etait optimiste
 
 
 def test_une_piste_confirmee_rentable_et_fraiche_est_achetable():
     x = Ligne("A", 1.0, 1.3, 1.20, 0.9, age_max=600, confirmee=1.30)
-    assert x.actionnable and x.ecart_confirmation > 0
+    assert x.actionnable
 
 
 def test_une_confirmation_sur_prix_vieux_ne_suffit_pas():

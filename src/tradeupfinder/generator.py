@@ -98,10 +98,6 @@ class Recipe:
     rarity: Rarity
 
     @property
-    def collection_ids(self) -> tuple[str, ...]:
-        return tuple(cid for cid, _ in self.counts)
-
-    @property
     def total(self) -> int:
         return sum(n for _, n in self.counts)
 
@@ -162,27 +158,6 @@ def build_options(
     return options
 
 
-def cheapest_selection(
-    options: Sequence[InputOption], count: int, float_budget: float
-) -> list[InputOption] | None:
-    """Selection de `count` objets de cout minimal, somme des floats <= budget.
-
-    Programmation dynamique sur une frontiere de Pareto (float cumule, cout
-    cumule). Les etats domines sont elimines a chaque slot, ce qui garde la
-    frontiere de l'ordre de quelques dizaines d'elements meme avec beaucoup
-    d'options. Exact, et assez rapide pour etre appele des milliers de fois.
-    """
-    if count <= 0:
-        return []
-    if not options:
-        return None
-
-    frontier = _extend_frontier(_INITIAL_FRONTIER, options, count, float_budget)
-    if frontier is None:
-        return None
-    return list(min(frontier, key=lambda s: s[1])[2])
-
-
 # Etat de depart de la DP : rien de choisi, cout et float nuls.
 _State = tuple[float, float, tuple[InputOption, ...]]
 _INITIAL_FRONTIER: list[_State] = [(0.0, 0.0, ())]
@@ -195,6 +170,11 @@ def _extend_frontier(
     float_budget: float,
 ) -> list[_State] | None:
     """Ajoute `count` objets a chaque etat, en ne gardant que le front de Pareto.
+
+    Programmation dynamique sur une frontiere (float cumule, cout cumule). Les
+    etats domines sont elimines a chaque slot, ce qui garde la frontiere de
+    l'ordre de quelques dizaines d'elements meme avec beaucoup d'options.
+    Exact, et assez rapide pour etre appele des milliers de fois.
 
     Renvoie None si le budget de float rend la selection impossible.
     """
@@ -245,7 +225,7 @@ def _pareto_filter(
 def cheapest_unique_selection(
     options: Sequence[InputOption], count: int, float_budget: float
 ) -> list[InputOption] | None:
-    """Comme `cheapest_selection`, mais chaque option ne sert QU'UNE FOIS.
+    """Comme `_extend_frontier`, mais chaque option ne sert QU'UNE FOIS.
 
     Indispensable des qu'on travaille sur des offres reelles : une annonce
     CSFloat est un objet unique, on ne peut pas l'acheter dix fois. Le

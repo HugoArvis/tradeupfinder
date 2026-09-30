@@ -187,13 +187,12 @@ class CSFloat(PriceSource):
         market_hash_name: str,
         *,
         limit: int = 20,
-        max_float: float | None = None,
-        min_float: float | None = None,
     ) -> list[Listing]:
         """Offres en vente, triees par prix croissant.
 
-        `min_float` / `max_float` filtrent cote serveur : c'est ce qui permet de
-        chercher directement les entrees a bas float d'un trade-up.
+        Aucun filtre de float n'est demande au serveur : la selection lit le
+        float REEL de chaque annonce, ce qui ne suppose pas que le filtre
+        serveur soit fiable.
         """
         params: dict[str, object] = {
             "limit": min(limit, 50),
@@ -201,11 +200,6 @@ class CSFloat(PriceSource):
             "market_hash_name": market_hash_name,
             "type": "buy_now",
         }
-        if max_float is not None:
-            params["max_float"] = max_float
-        if min_float is not None:
-            params["min_float"] = min_float
-
         data = self.client.get_json(LISTINGS_URL, params)
         rows = data.get("data", []) if isinstance(data, dict) else (data or [])
 
@@ -284,11 +278,3 @@ class CSFloat(PriceSource):
              "prix_moyen": float(r.get("avg_price", 0)) / 100.0}
             for r in rows[:jours]
         ]
-
-    def cheapest_at_float(
-        self, market_hash_name: str, max_float: float, limit: int = 20
-    ) -> Listing | None:
-        """Offre la moins chere dont le float ne depasse pas `max_float`."""
-        found = self.listings(market_hash_name, limit=limit, max_float=max_float)
-        candidates = [l for l in found if l.has_float and l.float_value <= max_float]
-        return min(candidates, key=lambda l: l.price) if candidates else None
