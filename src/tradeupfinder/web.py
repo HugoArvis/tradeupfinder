@@ -805,11 +805,10 @@ padding:22px 14px 18px;background:var(--card);border-right:1px solid var(--line)
 .marque{display:flex;align-items:center;gap:9px;font-size:18px;font-weight:750;
 padding:0 10px 22px;letter-spacing:-.01em}
 .marque svg{width:22px;height:22px;color:var(--accent)}
-.side .tabs{flex-direction:column;gap:2px;margin:0;border:0}
-.side .tab{display:flex;align-items:center;gap:10px;padding:8px 10px;border:0;
-border-radius:8px;font-weight:550}
-.side .tab:hover{background:var(--bg);color:var(--ink)}
-.side .tab.on{background:var(--bg);color:var(--ink)}
+.side .tabs{display:flex;flex-direction:column;gap:2px}
+.side .tab{display:flex;align-items:center;gap:10px;padding:8px 10px;
+border-radius:8px;font-weight:550;color:var(--muted);cursor:pointer}
+.side .tab:hover,.side .tab.on{background:var(--bg);color:var(--ink)}
 .tab svg{width:17px;height:17px;flex:none}
 .compte{margin-left:auto;min-width:22px;padding:0 6px;border:1px solid var(--line);
 border-radius:10px;font-size:12px;text-align:center;color:var(--muted)}
@@ -918,11 +917,9 @@ border-bottom:1px solid var(--line)}
 .stats,.stats.agenda{grid-template-columns:1fr 1fr}
 .stats.agenda>div:first-child{grid-column:1/-1}
 }
-/* Pleine largeur. Les TABLEAUX gagnent a s'etaler -- c'est la que la place
-   sert. La PROSE non : une ligne de 2000 px ne se lit plus, l'oeil perd le
-   debut de la ligne suivante. D'ou la mesure limitee sur les paragraphes
-   seulement, pas sur ce qui les contient. */
-.wrap{max-width:none;margin:0}
+/* Les TABLEAUX gagnent a s'etaler, la PROSE non : une ligne de 2000 px ne
+   se lit plus, l'oeil perd le debut de la ligne suivante. D'ou une mesure
+   limitee sur les paragraphes seulement. */
 p.muted,.warn{max-width:88ch}
 /* Les cartes se mettent cote a cote des que la largeur le permet, au lieu de
    laisser la moitie de l'ecran vide sous une colonne unique.
@@ -945,7 +942,6 @@ grid-template-columns:repeat(auto-fill,minmax(640px,1fr))}
    cela il occupe une cellule et decale toutes les cartes d'un cran. */
 .grille>p,.grille>.plein{grid-column:1/-1;margin:0}
 h1{font-size:22px;margin:0 0 4px}
-.sub{color:var(--muted);font-size:13px;margin-bottom:18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
 padding:18px;margin-bottom:14px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
@@ -964,13 +960,6 @@ white-space:nowrap}
 td.libre{white-space:normal;min-width:20ch}
 th{font-size:12px;color:var(--muted)}
 td.num,th.num{text-align:right}
-tr.pick{cursor:pointer}
-tr.pick:hover{background:var(--warn-bg)}
-tr.sel{outline:2px solid var(--accent);outline-offset:-2px}
-.tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
-.tab{padding:8px 16px;cursor:pointer;border-bottom:2px solid transparent;
-color:var(--muted);font-weight:600}
-.tab.on{color:var(--ink);border-bottom-color:var(--accent)}
 .pane{display:none}.pane.on{display:block}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 button.sm{padding:3px 10px;font-size:13px}
@@ -989,10 +978,6 @@ background:var(--warn-bg);color:var(--warn);font-weight:600}
 .tag[title]{cursor:help}
 .marques{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
 .marques:empty{display:none}
-.kpis{display:flex;gap:20px;flex-wrap:wrap}
-.kpi{flex:1 1 120px}
-.kpi .lab{color:var(--muted);font-size:12px;text-transform:uppercase}
-.kpi .val{font-size:22px;font-weight:650}
 .pos{color:var(--pos)}.neg{color:var(--neg)}
 .warn{background:var(--warn-bg);border-left:3px solid var(--warn);padding:10px 12px;
 border-radius:0 7px 7px 0;margin-bottom:10px;font-size:14px}
