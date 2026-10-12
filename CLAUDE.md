@@ -292,6 +292,28 @@ Trois contraintes que ce mode ne doit pas perdre de vue :
   lieu de les présenter comme des occasions, et `STEAM_MIN_PRICE` (0,03) marque
   ceux qu'aucun rabais ne peut sauver.
 
+**Mais 35 % est très au-delà de ce que Steam sert.** Test réel : deux ordres
+posés fin septembre 2026 sur les entrées du contrat Arabesque, relevés le
+12 octobre — **zéro exécution en 14 jours** :
+
+| ordre | prix | plus basse annonce | médiane | écart | ventes / 24 h |
+|---|---|---|---|---|---|
+| FAMAS \| Snake Song (WW) × 12 | 0,19 € | 0,28 € | 0,26 € | −32 % | 62 à 112 |
+| Sawed-Off \| Lunar Wyrm (FT) × 8 | 0,25 € | 0,38 € | 0,38 € | −34 % | 105 à 146 |
+
+Plus d'un millier de ventes sont passées pendant ce temps sans en toucher
+aucun. Un vendeur pressé sert **l'ordre le plus haut**, et la file au-dessus
+de ces prix les absorbe tous.
+
+Ce qui rend le résultat lisible : ces prix d'ordre valent à peu près le prix
+**CSFloat** du même objet (0,20 $ et 0,29 $ le même jour). Un ordre à −30 %
+revient à demander à un vendeur Steam de céder au prix d'un marché retirable,
+alors que l'argent Steam vaut moins — rien ne l'y pousse. Sur un objet liquide,
+un ordre n'est servi que **quelques centimes sous la plus basse annonce** : il
+épargne la surveillance, pas de la marge. `max_discount` doit donc descendre
+nettement, et le prix du meilleur ordre (`highest_buy_order`) devenir la
+référence — il n'est lisible qu'à la main tant que les `item_nameid` manquent.
+
 Les frais Steam ont un **plancher de 0,01 par frais**, donc ils écrasent les
 petits montants à la vente : 66 % sur un objet à 0,03 €, 28,6 % à 0,07 €, contre
 12–13 % au-delà de 0,25 €. À l'achat, le prix affiché est ce qu'on paie.
