@@ -1493,9 +1493,32 @@ function detailAnnonces(p) {
           : '<span class="muted">annonce non identifiée</span>'}</td></tr>`).join('')}
       </tbody>
     </table></div>
+    ${boutonOnglets(p.inputs.map(i => i.url))}
     <p class="muted">Float moyen ${p.avg_float.toFixed(4)} sur
     ${p.listings_examined} annonces examinées.</p>
   </details>`;
+}
+
+// L'API CSFloat n'a pas de panier : on ouvre chaque annonce dans un onglet, et
+// il reste a confirmer l'achat sur chacune. Rien n'est achete sans un clic.
+function boutonOnglets(urls) {
+  const liens = urls.filter(Boolean);
+  if (liens.length < 2) return '';
+  return `<button class="sm" data-onglets="${liens.join(' ')}">Ouvrir les
+    ${liens.length} annonces</button>`;
+}
+
+// Un navigateur n'autorise qu'une fenetre par clic tant que la page n'a pas
+// ses pop-up debloquees : on compte les refus pour le dire, sans quoi seule la
+// premiere annonce s'ouvrirait en silence. Pas de 'noopener' dans
+// window.open : il fait renvoyer null meme quand l'onglet s'ouvre.
+function ouvrirOnglets(urls) {
+  let bloques = 0;
+  for (const u of urls) {
+    const w = window.open(u, '_blank');
+    if (w) w.opener = null; else bloques++;
+  }
+  return bloques;
 }
 
 // Les ordres a placer, objet par objet. C'etait un ONGLET separe qui refaisait
@@ -1880,6 +1903,7 @@ function detailContrat(c) {
     <div class="scroll"><table><thead><tr><th>Objet</th>
       <th class="num">Float</th><th class="num">Prix</th><th>Verrou</th><th></th>
       </tr></thead><tbody>${lignes}</tbody></table></div>
+    ${boutonOnglets(c.items.filter(i => !i.purchased).map(i => i.url))}
   </div>
   <div class="modale-pied">
     <div class="row" style="margin:0">
@@ -1973,6 +1997,16 @@ document.addEventListener('click', async e => {
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corps)});
     await contrats();
     rafraichirModale();
+    return;
+  }
+  const og = e.target.closest('[data-onglets]');
+  if (og) {
+    const bloques = ouvrirOnglets(og.dataset.onglets.split(' '));
+    if (bloques) {
+      banniere(bloques + ' annonce(s) bloquée(s) par le navigateur : autorisez les '
+        + 'fenêtres pop-up pour cette page, puis recliquez.', true);
+      setTimeout(cacherBanniere, 10000);
+    }
     return;
   }
   const ouvrir = e.target.closest('[data-ouvrir]');
