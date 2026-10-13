@@ -10,6 +10,7 @@ Deux points sensibles, testes ici :
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -131,6 +132,39 @@ def test_absence_d_annonces_est_distinguee_d_une_erreur(app, monkeypatch):
     _attendre(batch, "finished")
 
     assert batch.failed and all("annonces" in f["error"] for f in batch.failed)
+
+
+# --- Un seul balayage a la fois ----------------------------------------------
+# Une page rechargee ne voyait plus le balayage en cours et laissait en lancer
+# un second : deux instances CSFloat, le double du debit, le quota epuise pour
+# une heure.
+
+
+def test_un_second_lancement_rend_le_balayage_en_cours(app, monkeypatch):
+    libere = threading.Event()
+    # Bloque le calcul, donc garde le balayage en cours ; None ensuite, comme
+    # une collection sans annonce.
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: libere.wait(5) and None)
+    try:
+        assert app.running_batch() is batch
+        # Meme une autre rarete : c'est le quota qui est partage, pas la rarete.
+        assert app.start_batch("restricted") is batch
+        assert len(app.batches) == 1
+    finally:
+        batch.state = "stopped"
+        libere.set()
+
+
+def test_un_balayage_fini_laisse_lancer_le_suivant(app, monkeypatch):
+    premier = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(premier, "finished")
+
+    assert app.running_batch() is None
+    second = app.start_batch("mil-spec")
+    assert second is not premier
+    # Laisser son thread finir avant que monkeypatch ne restaure les vrais
+    # appels reseau sous ses pieds.
+    _attendre(second, "finished")
 
 
 # --- Fuite de secret ---------------------------------------------------------

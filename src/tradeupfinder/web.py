@@ -385,15 +385,41 @@ class App:
 
     # --- Balayage complet ----------------------------------------------------
 
-    def start_batch(self, rarity_name: str) -> Batch:
-        cols = self.collections(rarity_name)
-        batch = Batch(
-            id=uuid.uuid4().hex[:12],
-            rarity=rarity_name,
-            pending=[c["id"] for c in cols],
-            total=len(cols),
-        )
+    def _balayage_en_cours(self) -> Batch | None:
+        """A appeler sous `self._lock`."""
+        for batch in self.batches.values():
+            if batch.state in ("running", "paused"):
+                return batch
+        return None
+
+    def running_batch(self) -> Batch | None:
+        """Le balayage qui tourne encore, en pause de quota comprise.
+
+        Il vit dans un thread du serveur, pas dans la page : recharger la page
+        le laisse tourner, et c'est par ici qu'elle le retrouve.
+        """
         with self._lock:
+            return self._balayage_en_cours()
+
+    def start_batch(self, rarity_name: str) -> Batch:
+        """Lance un balayage -- ou rend celui qui tourne deja.
+
+        Deux balayages simultanes ont chacun leur instance CSFloat, donc leur
+        limiteur : le debit reel double et le quota saute pour une heure. Une
+        page rechargee ne voyait plus le premier et laissait en lancer un
+        second ; c'est donc le serveur qui refuse.
+        """
+        cols = self.collections(rarity_name)
+        with self._lock:
+            en_cours = self._balayage_en_cours()
+            if en_cours is not None:
+                return en_cours
+            batch = Batch(
+                id=uuid.uuid4().hex[:12],
+                rarity=rarity_name,
+                pending=[c["id"] for c in cols],
+                total=len(cols),
+            )
             self.batches[batch.id] = batch
         threading.Thread(target=self._run_batch, args=(batch,), daemon=True).start()
         return batch
@@ -611,10 +637,14 @@ class Handler(BaseHTTPRequestHandler):
             # annoncer USD a un compte en euros fausse toute lecture des
             # montants, et le decalage ne se voit nulle part ailleurs.
             self.app.load_currency()
+            en_cours = self.app.running_batch()
             self._json({
                 "started_at": self.app.started_at,
                 "currency": self.app.currency,
                 "currency_known": self.app.currency_known,
+                # Pour qu'une page rechargee reprenne le suivi au lieu de
+                # croire qu'aucun balayage ne tourne.
+                "batch": en_cours.id if en_cours else None,
             })
         elif route.path.startswith("/api/batch/"):
             batch = self.app.batches.get(route.path.rsplit("/", 1)[-1])
@@ -704,8 +734,16 @@ class Handler(BaseHTTPRequestHandler):
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
+            avant = self.app.running_batch()
             batch = self.app.start_batch(rarity)
-            self._json({"batch": batch.id, "total": batch.total})
+            self._json({
+                "batch": batch.id,
+                "total": batch.total,
+                # Aucun second balayage n'a ete lance : la page le dit, au lieu
+                # de laisser croire que sa demande a ete prise.
+                "already_running": avant is not None and avant.id == batch.id,
+                "rarity": batch.rarity,
+            })
             return
         if chemin == "/api/batch/stop":
             batch = self.app.batches.get(corps.get("batch", ""))
@@ -1572,12 +1610,19 @@ function ageTexte(ts) {
 }
 
 async function dernierBalayage() {
-  // Cette vue remplace la liste d'un balayage en cours : le sondage suivant
-  // doit la redessiner, pas la croire deja a l'ecran.
+  // Pendant un balayage, c'est lui qu'on affiche : montrer la nuit derniere
+  // serait aussitot recouvert par le sondage, ou le recouvrirait.
   resultatsDessines = null;
+  if (sondageBatch) {
+    if (dernierBatch) await dessinerBatch(dernierBatch);
+    return;
+  }
   const r = $('#rarity').value;
   const d = await fetch('/api/latest?rarity=' + r).then(x => x.json());
   if (d.error) return;
+  // Au chargement, le suivi d'un balayage en cours a pu demarrer pendant
+  // cette requete : sa liste ne doit pas etre ecrasee par celle de la nuit.
+  if (sondageBatch) return;
   const plans = d.plans || [];
   $('#stats-calcul').innerHTML = statsCalcul(plans, null);
   $('#nb-calcul').textContent = plans.length || '';
@@ -1594,7 +1639,8 @@ async function dernierBalayage() {
 
   // Le detail d'achat vient du journal, pas d'un nouveau calcul.
   const plansComplets = await Promise.all(plans.map(p => chargerPlan(p.plan_id)));
-  const age = Math.min(...plans.map(p => Date.now() / 1000 - p.created_at));
+  if (sondageBatch) return;
+  const age =Math.min(...plans.map(p => Date.now() / 1000 - p.created_at));
 
   $('#avancement').innerHTML = `<div class="card">
     <b>${plans.length} contrat(s) rentable(s) au dernier balayage</b>
@@ -1660,8 +1706,9 @@ $('#chercher').addEventListener('click', async () => {
   // serait interprete par Python avant d'atteindre le navigateur.
   const avert = `Coter ${collections.length} collections ?
 
-Environ ${req} requêtes CSFloat, soit un long moment. Laissez le terminal et
-cette page ouverts : la recherche reprend toute seule si le quota s’épuise.`;
+Environ ${req} requêtes CSFloat, soit un long moment. Laissez le terminal
+ouvert : la recherche reprend toute seule si le quota s’épuise, et la page
+peut être rechargée sans l’arrêter.`;
   if (!confirm(avert)) return;
 
   $('#chercher').disabled = true;
@@ -1672,20 +1719,38 @@ cette page ouverts : la recherche reprend toute seule si le quota s’épuise.`;
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rarity: $('#rarity').value})}).then(x => x.json());
   if (r.error) { banniere(r.error, true); $('#chercher').disabled = false; return; }
-  clearInterval(sondageBatch);
-  sondageBatch = setInterval(() => suivreBatch(r.batch), 5000);
-  suivreBatch(r.batch);
+  // Le serveur n'en lance jamais deux : il rend celui qui tourne deja.
+  if (r.already_running) {
+    alert(`Un balayage ${r.rarity} tourne déjà : aucun second n’a été lancé, ` +
+      `deux en même temps épuiseraient le quota CSFloat. Le suivi reprend sur ` +
+      `celui en cours.`);
+  }
+  suivre(r.batch);
 });
+
+// Un seul point d'entree pour suivre un balayage : apres un lancement, ou au
+// chargement de la page quand le serveur en a un en cours -- il vit dans le
+// serveur, recharger la page ne l'arrete pas.
+function suivre(id) {
+  clearInterval(sondageBatch);
+  $('#chercher').disabled = true;
+  sondageBatch = setInterval(() => suivreBatch(id), 5000);
+  suivreBatch(id);
+}
+function arreterSuivi() {
+  clearInterval(sondageBatch);
+  sondageBatch = null;
+  $('#chercher').disabled = false;
+}
 
 async function suivreBatch(id) {
   const b = await fetch('/api/batch/' + id).then(x => x.json());
-  if (b.error) { clearInterval(sondageBatch); $('#chercher').disabled = false; return; }
+  if (b.error) { arreterSuivi(); return; }
 
   const fini = b.state === 'finished' || b.state === 'stopped';
   if (fini) {
-    clearInterval(sondageBatch);
+    arreterSuivi();
     cacherBanniere();
-    $('#chercher').disabled = false;
   } else {
     banniere(`Recherche ${Math.round(b.progress * 100)}% — ` +
       `${b.results.length} rentable(s) trouvé(s), ${b.remaining} collections ` +
@@ -2071,6 +2136,7 @@ document.addEventListener('keydown', e => {
 });
 
 fetch('/api/status').then(x => x.json()).then(d => {
+  if (d.batch) suivre(d.batch);
   $('#demarrage').textContent =
     new Date(d.started_at * 1000).toLocaleTimeString('fr-FR',
       {hour: '2-digit', minute: '2-digit'});
