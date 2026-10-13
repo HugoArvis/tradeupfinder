@@ -10,6 +10,7 @@ Deux points sensibles, testes ici :
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
@@ -131,6 +132,101 @@ def test_absence_d_annonces_est_distinguee_d_une_erreur(app, monkeypatch):
     _attendre(batch, "finished")
 
     assert batch.failed and all("annonces" in f["error"] for f in batch.failed)
+
+
+# --- Un seul balayage a la fois ----------------------------------------------
+# Une page rechargee ne voyait plus le balayage en cours et laissait en lancer
+# un second : deux instances CSFloat, le double du debit, le quota epuise pour
+# une heure.
+
+
+def test_un_second_lancement_rend_le_balayage_en_cours(app, monkeypatch):
+    libere = threading.Event()
+    # Bloque le calcul, donc garde le balayage en cours ; None ensuite, comme
+    # une collection sans annonce.
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: libere.wait(5) and None)
+    try:
+        assert app.running_batch() is batch
+        # Meme une autre rarete : c'est le quota qui est partage, pas la rarete.
+        assert app.start_batch("restricted") is batch
+        assert len(app.batches) == 1
+    finally:
+        batch.state = "stopped"
+        libere.set()
+
+
+def test_un_balayage_fini_laisse_lancer_le_suivant(app, monkeypatch):
+    premier = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(premier, "finished")
+
+    assert app.running_batch() is None
+    second = app.start_batch("mil-spec")
+    assert second is not premier
+    # Laisser son thread finir avant que monkeypatch ne restaure les vrais
+    # appels reseau sous ses pieds.
+    _attendre(second, "finished")
+
+
+# --- Reprise d'un balayage --------------------------------------------------
+# Un balayage lance depuis la page repartait de la premiere collection apres un
+# redemarrage du serveur, et refaisait ce qui venait d'etre calcule.
+
+
+def _plan_journal(collection):
+    return {"collection": collection, "cost": 1.0, "net": 1.5, "profit": 0.5,
+            "roi": 0.5, "profitability": 1.5, "avg_float": 0.1, "outcomes": [{}]}
+
+
+def _app_journal(tmp_path, monkeypatch, appels):
+    from tradeupfinder.journal import Journal
+
+    j = Journal(tmp_path / "j.db")
+    app = App(SkinDatabase.from_dict(RAW_DB), "cle", journal=j)
+
+    def build_plan(db, col, *a, **kw):
+        appels.append(col.id)
+        return None
+
+    monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
+    monkeypatch.setattr(app, "load_currency", lambda: None)
+    monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
+    monkeypatch.setattr(app, "revente", lambda: None)
+    return app, j
+
+
+def test_une_collection_recente_est_reprise_sans_recalcul(tmp_path, monkeypatch):
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    pid = j.save_plan(_plan_journal("Collection A"), collection_id="col_a",
+                      rarity="mil-spec")
+
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+
+    assert appels == ["col_b"]  # col_a n'est pas recotee
+    assert batch.reused == 1 and batch.total == 2
+    # ... mais son plan reste dans les resultats, comme s'il venait d'etre fait.
+    assert [d["plan_id"] for d in app.batch_payload(batch)["results"]] == [pid]
+    j.close()
+
+
+def test_le_balayage_commence_par_le_jamais_calcule_puis_le_plus_ancien(
+        tmp_path, monkeypatch):
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    # col_a calculee il y a deux jours : perimee, donc recalculee -- mais
+    # APRES col_b, jamais calculee.
+    j.save_plan(_plan_journal("Collection A"), collection_id="col_a",
+                rarity="mil-spec")
+    j._conn.execute("UPDATE plans SET created_at = ?", (time.time() - 2 * 86400,))
+    j._conn.commit()
+
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+
+    assert appels == ["col_b", "col_a"]
+    assert batch.reused == 0
+    j.close()
 
 
 # --- Fuite de secret ---------------------------------------------------------

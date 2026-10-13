@@ -96,6 +96,8 @@ class Batch:
     message: str = ""
     started: float = field(default_factory=time.time)
     resume_at: float = 0.0
+    #: Collections reprises du journal au lieu d'etre recalculees.
+    reused: int = 0
 
     @property
     def progress(self) -> float:
@@ -128,6 +130,34 @@ class InventoryJob:
 # Convention des guides et des calculateurs : 1.0 est le point mort, pas le
 # profit. En dessous, le contrat detruit de la valeur.
 SEUIL_PROFITABLE = 1.0
+
+#: Une collection calculee depuis moins longtemps n'est pas recalculee par un
+#: balayage : son plan est repris du journal. Au-dela, ses annonces ont pu
+#: partir -- un plan est perissable.
+RECALCUL_APRES = 6 * 3600
+
+
+def _ligne_resultat(plan_id: str, collection: str, rarity: str, payload: dict) -> dict:
+    """Une collection traitee, telle que la liste d'un balayage la montre.
+
+    Partagee par le calcul et par la reprise du journal : un plan repris doit
+    se lire exactement comme un plan qu'on vient de calculer.
+    """
+    return {
+        "plan_id": plan_id,
+        "collection": collection,
+        "rarity": RARITES[rarity].label,
+        "cost": payload["cost"],
+        "net": payload["net"],
+        "profit": payload["profit"],
+        "roi": payload["roi"],
+        "profitability": payload.get("profitability", 0.0),
+        "outcomes": len(payload["outcomes"]),
+        "worst_profit": payload.get("worst_profit"),
+        "all_profitable": payload.get("all_profitable", False),
+        "win_probability": payload.get("win_probability", 0.0),
+        "stdev": payload.get("stdev", 0.0),
+    }
 
 
 class App:
@@ -385,15 +415,55 @@ class App:
 
     # --- Balayage complet ----------------------------------------------------
 
-    def start_batch(self, rarity_name: str) -> Batch:
-        cols = self.collections(rarity_name)
-        batch = Batch(
-            id=uuid.uuid4().hex[:12],
-            rarity=rarity_name,
-            pending=[c["id"] for c in cols],
-            total=len(cols),
-        )
+    def _balayage_en_cours(self) -> Batch | None:
+        """A appeler sous `self._lock`."""
+        for batch in self.batches.values():
+            if batch.state in ("running", "paused"):
+                return batch
+        return None
+
+    def running_batch(self) -> Batch | None:
+        """Le balayage qui tourne encore, en pause de quota comprise.
+
+        Il vit dans un thread du serveur, pas dans la page : recharger la page
+        le laisse tourner, et c'est par ici qu'elle le retrouve.
+        """
         with self._lock:
+            return self._balayage_en_cours()
+
+    def start_batch(self, rarity_name: str) -> Batch:
+        """Lance un balayage -- ou rend celui qui tourne deja.
+
+        Deux balayages simultanes ont chacun leur instance CSFloat, donc leur
+        limiteur : le debit reel double et le quota saute pour une heure. Une
+        page rechargee ne voyait plus le premier et laissait en lancer un
+        second ; c'est donc le serveur qui refuse.
+        """
+        cols = self.collections(rarity_name)
+        # Meme ordre que `sweep` : jamais calculees d'abord, puis les plus
+        # anciennes. Sans lui, un balayage coupe -- serveur relance, quota --
+        # repartait de la premiere collection et refaisait les memes.
+        vues = self.journal.last_swept(rarity_name)
+        recents = self.journal.recent_plans(rarity_name, RECALCUL_APRES)
+        a_faire = sorted((c for c in cols if c["id"] not in recents),
+                         key=lambda c: vues.get(c["id"], 0.0))
+        repris = []
+        for c in cols:
+            if c["id"] in recents:
+                plan_id, payload = recents[c["id"]]
+                repris.append(_ligne_resultat(plan_id, c["name"], rarity_name, payload))
+        with self._lock:
+            en_cours = self._balayage_en_cours()
+            if en_cours is not None:
+                return en_cours
+            batch = Batch(
+                id=uuid.uuid4().hex[:12],
+                rarity=rarity_name,
+                pending=[c["id"] for c in a_faire],
+                total=len(cols),
+                done=repris,
+                reused=len(repris),
+            )
             self.batches[batch.id] = batch
         threading.Thread(target=self._run_batch, args=(batch,), daemon=True).start()
         return batch
@@ -459,21 +529,9 @@ class App:
             plan_id = self.journal.save_plan(
                 payload, collection_id=cid, rarity=batch.rarity
             )
-            batch.done.append({
-                "plan_id": plan_id,
-                "collection": col.name,
-                "rarity": RARITES[batch.rarity].label,
-                "cost": payload["cost"],
-                "net": payload["net"],
-                "profit": payload["profit"],
-                "roi": payload["roi"],
-                "profitability": payload.get("profitability", 0.0),
-                "outcomes": len(payload["outcomes"]),
-                "worst_profit": payload.get("worst_profit"),
-                "all_profitable": payload.get("all_profitable", False),
-                "win_probability": payload.get("win_probability", 0.0),
-                "stdev": payload.get("stdev", 0.0),
-            })
+            batch.done.append(
+                _ligne_resultat(plan_id, col.name, batch.rarity, payload)
+            )
 
         if batch.state != "stopped":
             batch.state = "finished"
@@ -506,6 +564,7 @@ class App:
             "resume_in": max(0, round(batch.resume_at - time.time())),
             "currency": self.currency,
             "computed": len(batch.done),
+            "reused": batch.reused,
             "rejected": len(batch.done) - len(retenus),
             "results": retenus,
             "failed": batch.failed[-10:],
@@ -611,10 +670,14 @@ class Handler(BaseHTTPRequestHandler):
             # annoncer USD a un compte en euros fausse toute lecture des
             # montants, et le decalage ne se voit nulle part ailleurs.
             self.app.load_currency()
+            en_cours = self.app.running_batch()
             self._json({
                 "started_at": self.app.started_at,
                 "currency": self.app.currency,
                 "currency_known": self.app.currency_known,
+                # Pour qu'une page rechargee reprenne le suivi au lieu de
+                # croire qu'aucun balayage ne tourne.
+                "batch": en_cours.id if en_cours else None,
             })
         elif route.path.startswith("/api/batch/"):
             batch = self.app.batches.get(route.path.rsplit("/", 1)[-1])
@@ -704,8 +767,16 @@ class Handler(BaseHTTPRequestHandler):
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
+            avant = self.app.running_batch()
             batch = self.app.start_batch(rarity)
-            self._json({"batch": batch.id, "total": batch.total})
+            self._json({
+                "batch": batch.id,
+                "total": batch.total,
+                # Aucun second balayage n'a ete lance : la page le dit, au lieu
+                # de laisser croire que sa demande a ete prise.
+                "already_running": avant is not None and avant.id == batch.id,
+                "rarity": batch.rarity,
+            })
             return
         if chemin == "/api/batch/stop":
             batch = self.app.batches.get(corps.get("batch", ""))
@@ -1572,9 +1643,19 @@ function ageTexte(ts) {
 }
 
 async function dernierBalayage() {
+  // Pendant un balayage, c'est lui qu'on affiche : montrer la nuit derniere
+  // serait aussitot recouvert par le sondage, ou le recouvrirait.
+  resultatsDessines = null;
+  if (sondageBatch) {
+    if (dernierBatch) await dessinerBatch(dernierBatch);
+    return;
+  }
   const r = $('#rarity').value;
   const d = await fetch('/api/latest?rarity=' + r).then(x => x.json());
   if (d.error) return;
+  // Au chargement, le suivi d'un balayage en cours a pu demarrer pendant
+  // cette requete : sa liste ne doit pas etre ecrasee par celle de la nuit.
+  if (sondageBatch) return;
   const plans = d.plans || [];
   $('#stats-calcul').innerHTML = statsCalcul(plans, null);
   $('#nb-calcul').textContent = plans.length || '';
@@ -1591,7 +1672,8 @@ async function dernierBalayage() {
 
   // Le detail d'achat vient du journal, pas d'un nouveau calcul.
   const plansComplets = await Promise.all(plans.map(p => chargerPlan(p.plan_id)));
-  const age = Math.min(...plans.map(p => Date.now() / 1000 - p.created_at));
+  if (sondageBatch) return;
+  const age =Math.min(...plans.map(p => Date.now() / 1000 - p.created_at));
 
   $('#avancement').innerHTML = `<div class="card">
     <b>${plans.length} contrat(s) rentable(s) au dernier balayage</b>
@@ -1606,6 +1688,27 @@ async function dernierBalayage() {
 // --- La recherche -----------------------------------------------------------
 
 let sondageBatch = null, dernierBatch = null;
+// Le sondage d'un balayage tourne toutes les 5 s et redessinait la zone des
+// resultats a chaque fois : un plan ouvert par "Voir le plan" disparaissait,
+// et un detail deplie se refermait. `vuePlan` lui interdit d'y toucher tant
+// qu'un plan est affiche ; `resultatsDessines` evite de redessiner une liste
+// qui n'a pas change.
+let vuePlan = false, resultatsDessines = null;
+
+// Les <details> deplies de chaque plan, pour les rouvrir apres un redessin.
+function detailsOuverts() {
+  const ouverts = {};
+  document.querySelectorAll('#resultats [data-plan-id]').forEach(el => {
+    ouverts[el.dataset.planId] = [...el.querySelectorAll('details')].map(d => d.open);
+  });
+  return ouverts;
+}
+function restaurerDetails(ouverts) {
+  document.querySelectorAll('#resultats [data-plan-id]').forEach(el => {
+    const etats = ouverts[el.dataset.planId] || [];
+    el.querySelectorAll('details').forEach((d, i) => { if (etats[i]) d.open = true; });
+  });
+}
 
 // La vue d'un plan s'ouvre depuis la liste des contrats, dans un AUTRE onglet :
 // sans retour explicite, revenir a la liste demandait de retrouver l'onglet et
@@ -1636,30 +1739,51 @@ $('#chercher').addEventListener('click', async () => {
   // serait interprete par Python avant d'atteindre le navigateur.
   const avert = `Coter ${collections.length} collections ?
 
-Environ ${req} requêtes CSFloat, soit un long moment. Laissez le terminal et
-cette page ouverts : la recherche reprend toute seule si le quota s’épuise.`;
+Environ ${req} requêtes CSFloat, soit un long moment. Laissez le terminal
+ouvert : la recherche reprend toute seule si le quota s’épuise, et la page
+peut être rechargée sans l’arrêter.`;
   if (!confirm(avert)) return;
 
   $('#chercher').disabled = true;
+  vuePlan = false;
+  resultatsDessines = null;
   $('#resultats').innerHTML = '';
   const r = await fetch('/api/batch', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rarity: $('#rarity').value})}).then(x => x.json());
   if (r.error) { banniere(r.error, true); $('#chercher').disabled = false; return; }
-  clearInterval(sondageBatch);
-  sondageBatch = setInterval(() => suivreBatch(r.batch), 5000);
-  suivreBatch(r.batch);
+  // Le serveur n'en lance jamais deux : il rend celui qui tourne deja.
+  if (r.already_running) {
+    alert(`Un balayage ${r.rarity} tourne déjà : aucun second n’a été lancé, ` +
+      `deux en même temps épuiseraient le quota CSFloat. Le suivi reprend sur ` +
+      `celui en cours.`);
+  }
+  suivre(r.batch);
 });
+
+// Un seul point d'entree pour suivre un balayage : apres un lancement, ou au
+// chargement de la page quand le serveur en a un en cours -- il vit dans le
+// serveur, recharger la page ne l'arrete pas.
+function suivre(id) {
+  clearInterval(sondageBatch);
+  $('#chercher').disabled = true;
+  sondageBatch = setInterval(() => suivreBatch(id), 5000);
+  suivreBatch(id);
+}
+function arreterSuivi() {
+  clearInterval(sondageBatch);
+  sondageBatch = null;
+  $('#chercher').disabled = false;
+}
 
 async function suivreBatch(id) {
   const b = await fetch('/api/batch/' + id).then(x => x.json());
-  if (b.error) { clearInterval(sondageBatch); $('#chercher').disabled = false; return; }
+  if (b.error) { arreterSuivi(); return; }
 
   const fini = b.state === 'finished' || b.state === 'stopped';
   if (fini) {
-    clearInterval(sondageBatch);
+    arreterSuivi();
     cacherBanniere();
-    $('#chercher').disabled = false;
   } else {
     banniere(`Recherche ${Math.round(b.progress * 100)}% — ` +
       `${b.results.length} rentable(s) trouvé(s), ${b.remaining} collections ` +
@@ -1675,6 +1799,7 @@ async function dessinerBatch(b) {
   const fini = b.state === 'finished' || b.state === 'stopped';
   $('#stats-calcul').innerHTML = statsCalcul(b.results, fini ? null : b.progress);
   $('#nb-calcul').textContent = b.results.length || '';
+  if (vuePlan) return;
 
   $('#avancement').innerHTML = `<div class="card">
     <div class="row" style="justify-content:space-between;margin:0">
@@ -1687,7 +1812,13 @@ async function dessinerBatch(b) {
       sous le point mort, ${b.failed.length} sans assez d’annonces &middot;
       ${Math.round(b.elapsed / 60)} min écoulées &middot; montants en
       ${b.currency}</p>
+    ${b.reused ? `<p class="muted">${b.reused} collection(s) calculée(s) il y
+      a moins de 6 h, reprises telles quelles au lieu d’être recotées.</p>` : ''}
   </div>`;
+
+  const cle = b.results.map(x => x.plan_id).join(',') + (fini ? '|fini' : '');
+  if (cle === resultatsDessines) return;
+  resultatsDessines = cle;
 
   if (!b.results.length) {
     $('#resultats').innerHTML = fini
@@ -1703,8 +1834,13 @@ async function dessinerBatch(b) {
   // Les plans arrivent au fil de l'eau : on charge le detail de chacun avant
   // d'afficher, pour qu'une carte ne s'ouvre jamais sans sa liste d'achat.
   const plans = await Promise.all(b.results.map(x => chargerPlan(x.plan_id)));
+  // Un plan a pu etre ouvert pendant le chargement.
+  if (vuePlan) { resultatsDessines = null; return; }
+  const ouverts = detailsOuverts();
   $('#resultats').innerHTML = b.results
-    .map((x, i) => carte(plans[i], x.plan_id, false)).join('');
+    .map((x, i) => `<div data-plan-id="${x.plan_id}">` +
+      carte(plans[i], x.plan_id, false) + '</div>').join('');
+  restaurerDetails(ouverts);
 }
 
 document.addEventListener('click', async e => {
@@ -1944,6 +2080,7 @@ document.addEventListener('click', async e => {
     fermerModale();
     positionListe = window.scrollY;
     document.querySelector('.tab[data-pane="calcul"]').click();
+    vuePlan = true;
     $('#avancement').innerHTML = boutonRetour();
     $('#resultats').innerHTML = carte(r.plan, v.dataset.voir, true);
     // Le bouton est AU-DESSUS de la carte : viser la carte le cacherait.
@@ -1953,6 +2090,8 @@ document.addEventListener('click', async e => {
   if (e.target.closest('[data-retour]')) {
     // La vue d'un plan avait pris la place des resultats du jour : on les
     // remet, sans quoi l'onglet Calculer resterait fige sur ce plan.
+    vuePlan = false;
+    resultatsDessines = null;
     $('#avancement').innerHTML = '';
     $('#resultats').innerHTML = '';
     dernierBalayage();
@@ -2032,6 +2171,7 @@ document.addEventListener('keydown', e => {
 });
 
 fetch('/api/status').then(x => x.json()).then(d => {
+  if (d.batch) suivre(d.batch);
   $('#demarrage').textContent =
     new Date(d.started_at * 1000).toLocaleTimeString('fr-FR',
       {hour: '2-digit', minute: '2-digit'});
