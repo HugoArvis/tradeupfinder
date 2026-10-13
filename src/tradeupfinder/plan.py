@@ -631,11 +631,13 @@ class Plan:
         """
         return self.result.cliff_distance * TRADEUP_INPUT_COUNT
 
-    def shopping_lines(self) -> list[str]:
+    def shopping_lines(self, rate: float = 1.0) -> list[str]:
+        """Les lignes d'achat, prix convertis par `rate` (1 USD en devise)."""
         lignes = []
         for opt in sorted(self.options, key=lambda o: (o.skin.name, o.float_value)):
             lignes.append(
-                f"  {opt.name:<46} {opt.unit_cost:>7.2f}  float {opt.float_value:.4f}"
+                f"  {opt.name:<46} {opt.unit_cost * rate:>7.2f}"
+                f"  float {opt.float_value:.4f}"
             )
         return lignes
 

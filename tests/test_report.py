@@ -136,6 +136,15 @@ def test_devise_affichee():
     assert "montants en EUR" in render(make_plan(), currency="EUR")
 
 
+def test_les_montants_sont_convertis_pas_seulement_letiquette():
+    """La page annoncait "montants en EUR" sur des montants restes en USD."""
+    # 10 entrees a 1.14 USD = 11.40 ; a 0.86 EUR le dollar, 9.80.
+    page = render(make_plan(), currency="EUR", rate=0.86)
+    assert "9.80" in page and "11.40" not in page
+    # La sortie aussi : 16.02 USD -> 13.78 EUR.
+    assert "13.78" in page
+
+
 # --- Porte de sortie ---------------------------------------------------------
 
 
