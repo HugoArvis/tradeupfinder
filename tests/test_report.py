@@ -47,7 +47,24 @@ def test_chaque_annonce_a_son_lien_direct():
     page = render(make_plan())
     for i in range(10):
         assert f"https://csfloat.com/item/listing{i}" in page
-    assert page.count('class="buy"') == 10
+    assert page.count('<a class="buy"') == 10
+
+
+def test_un_bouton_ouvre_toutes_les_annonces():
+    """L'API CSFloat n'a pas de panier : le bouton en tient lieu."""
+    page = render(make_plan())
+    attendu = " ".join(f"https://csfloat.com/item/listing{i}" for i in range(10))
+    assert f'data-onglets="{attendu}"' in page
+    assert "Ouvrir les 10 annonces" in page
+
+
+def test_pas_de_bouton_sans_annonce_identifiee():
+    options = tuple(
+        InputOption(skin=ENTREE, wear=Wear.MINIMAL_WEAR, unit_cost=1.0,
+                    float_value=0.08, listing_id=None)
+        for _ in range(10)
+    )
+    assert 'id="tout-ouvrir"' not in render(make_plan(options=options))
 
 
 def test_annonce_sans_identifiant_ne_fabrique_pas_de_lien_casse():
