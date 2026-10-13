@@ -465,6 +465,36 @@ irrécupérable à un panier déjà acheté : un panier d'entrées se compare à
 payées 4,84 € en revalaient 4,89 € — le contrat ne se jugeait donc pas sur
 +1,33 € de profit annoncé mais sur 6,17 € contre 4,89 €.
 
+**Si l'on vise le retirable, la sortie se revend sur CSFloat, jamais par le
+détour Steam.** Le même contrat Arabesque, mené à terme le 13 octobre 2026 :
+l'AUG | Lapis Lazuli (MW) sortie, valorisée **6,23 € nets sur Steam** par le
+plan, s'est vendue **5,28 € sur CSFloat** en moins d'une journée — soit
+≈ 5,17 € nets de 2 % de frais, pour **4,90 €** d'entrées réellement payées.
+
+| voie | retirable | contre 4,90 € engagés |
+|---|---|---|
+| revente Steam (6,23 €) puis sortie à 62 % | ≈ 3,86 € | −1,04 € |
+| **revente directe CSFloat (5,28 €)** | **≈ 5,17 €** | **+0,27 € (+5,6 %)** |
+
+Premier contrat du projet gagnant en argent retirable, et il ne l'est que par le
+choix du marché de revente : la voie Steam le rendait perdant. Le paragraphe
+« Revendre sur Steam rapporte plus » reste vrai **en monnaie Steam** ; dès qu'on
+compte en retirable, l'écart de 17 à 37 % qu'il mesure est plus que repris par
+les 38 % de la sortie.
+
+Deux autres mesures sur la même vente :
+- **décote de revente ≈ 8 %** sous la plus basse annonce CSFloat du palier
+  (6,67 $ la veille), contre 33 % sur le seul contrat mesuré jusque-là — une
+  vente unique, pas encore une moyenne, mais sous le seuil d'environ 18 % où le
+  gain s'annule ;
+- **deux semaines de cycle** (achats du 29/09 au 05/10, verrou, fusion,
+  vente), dont une semaine perdue en vendeurs défaillants et remplacements.
+  C'est le rythme, pas la marge, qui borne ce circuit.
+
+Ce qui manque au code : la ligne de commande `plan` revend déjà sur CSFloat
+(aucun `sell_source`), mais l'application web et le balayage valorisent la
+sortie sur Steam, donc dans la monnaie qu'on ne veut pas.
+
 **Le TTL se decide dans la SOURCE, pas dans le cache.** `QuoteCache`
 conserve tout ; a chaque lecture `SteamMarket`/`CSFloat` lui impose son propre
 `ttl_seconds` (6 h et 3 h par defaut). Tant que `--ttl` n'arrivait qu'au cache,
