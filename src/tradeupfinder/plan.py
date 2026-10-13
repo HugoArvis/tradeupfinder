@@ -1022,6 +1022,18 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
     def arrondi(valeur):
         return None if valeur is None else round(valeur, 4)
 
+    def ligne_ordre(ligne):
+        # Le plancher de Steam vaut dans la devise du COMPTE, pas en USD ou le
+        # calcul se fait : `below_floor` se rejuge donc apres conversion.
+        prix = c(ligne["order_price"])
+        return {
+            "name": ligne["name"],
+            "quantity": ligne["quantity"],
+            "market_price": c(ligne["market_price"]),
+            "order_price": prix,
+            "below_floor": prix < STEAM_MIN_PRICE,
+        }
+
     lignes = plan.steam_order_lines()
     return {
         "collection": plan.collection.name,
@@ -1064,19 +1076,7 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # Le prix d'ordre OBJET PAR OBJET. Un budget total ne se place pas :
         # on pose un ordre par objet, a un prix. Sans ce detail, les ordres
         # devaient vivre dans un onglet separe qui refaisait tout le calcul.
-        #
-        # Le plancher de Steam vaut dans la devise du COMPTE, pas en USD ou le
-        # calcul se fait : `below_floor` se rejuge donc apres conversion.
-        "order_lines": None if lignes is None else [
-            {
-                "name": ligne["name"],
-                "quantity": ligne["quantity"],
-                "market_price": c(ligne["market_price"]),
-                "order_price": c(ligne["order_price"]),
-                "below_floor": c(ligne["order_price"]) < STEAM_MIN_PRICE,
-            }
-            for ligne in lignes
-        ],
+        "order_lines": None if lignes is None else [ligne_ordre(l) for l in lignes],
         "worst_profit": opt(plan.worst_profit),
         "best_profit": opt(plan.best_profit),
         "all_profitable": plan.all_outcomes_profitable,
