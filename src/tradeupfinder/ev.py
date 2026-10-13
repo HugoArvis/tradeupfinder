@@ -108,11 +108,6 @@ class TradeUpResult:
         rows.sort(key=lambda r: (-r[1], r[0]))
         return rows
 
-    @property
-    def max_input_float(self) -> float:
-        """Float le plus eleve qu'une entree doit respecter."""
-        return max((i.float_value for i in self.inputs), default=0.0)
-
     # --- Esperance ---
     @property
     def ev_net(self) -> float:

@@ -1,6 +1,6 @@
 """Tests de la selection 0/1 et de la construction de panier reel.
 
-La difference avec `cheapest_selection` est subtile mais critique : une annonce
+La difference avec la selection de `scan` est subtile mais critique : une annonce
 CSFloat est un objet UNIQUE. Un selecteur qui autorise la repetition produirait
 un panier impossible a passer en caisse.
 """
@@ -13,7 +13,8 @@ import pytest
 
 from tradeupfinder.generator import (
     InputOption,
-    cheapest_selection,
+    Recipe,
+    _select_across_collections,
     cheapest_unique_selection,
     options_from_listings,
 )
@@ -41,8 +42,9 @@ def test_une_annonce_ne_peut_servir_quune_fois():
     """Le coeur du sujet : 3 annonces ne suffisent pas pour 10 entrees."""
     options = [opt(1.0, 0.01), opt(1.0, 0.01), opt(1.0, 0.01)]
 
-    # Le selecteur a repetition accepte : il croit a un stock infini.
-    assert cheapest_selection(options, 10, float_budget=1.0) is not None
+    # Le selecteur a repetition de `scan` accepte : il croit a un stock infini.
+    recette = Recipe(counts=(("c", 10),), rarity=Rarity.MIL_SPEC)
+    assert _select_across_collections(recette, {"c": options}, 1.0) is not None
     # Le selecteur unique refuse : il n'y a que 3 objets reels.
     assert cheapest_unique_selection(options, 10, float_budget=1.0) is None
 

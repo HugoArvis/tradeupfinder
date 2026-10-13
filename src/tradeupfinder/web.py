@@ -47,7 +47,6 @@ from .pricing.cache import QuoteCache
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .pricing.steam import SteamMarket
-from .report import render as render_report
 
 log = logging.getLogger(__name__)
 
@@ -71,24 +70,6 @@ def libelle_rarete(nom: str | None) -> str:
     """
     rarete = RARITES.get(str(nom or ""))
     return rarete.label if rarete else str(nom or "")
-
-
-@dataclass
-class Job:
-    """Un calcul de plan en cours ou termine."""
-
-    id: str
-    collection_id: str
-    rarity: str
-    state: str = "running"  # running | done | empty | error | quota
-    started: float = field(default_factory=time.time)
-    plan: Plan | None = None
-    plan_id: str | None = None
-    message: str = ""
-
-    @property
-    def elapsed(self) -> float:
-        return time.time() - self.started
 
 
 @dataclass
@@ -126,7 +107,7 @@ class Batch:
 class InventoryJob:
     """Calcul des contrats realisables avec l'inventaire, en tache de fond.
 
-    Meme raison qu'un plan : valoriser les objets possedes demande une requete
+    Meme raison qu'un balayage : valoriser les objets possedes demande une requete
     CSFloat par nom de marche, donc des minutes. Une requete HTTP bloquante
     donnerait une page figee.
     """
@@ -157,7 +138,6 @@ class App:
         self.db = db
         self._api_key = api_key  # jamais expose
         self.rate = rate
-        self.jobs: dict[str, Job] = {}
         self.batches: dict[str, Batch] = {}
         self.inventory_jobs: dict[str, InventoryJob] = {}
         # L'inventaire coute une requete a lire et ne bouge pas entre deux
@@ -403,52 +383,10 @@ class App:
             "gaps": job.gaps,
         }
 
-    def start_plan(self, collection_id: str, rarity_name: str) -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], collection_id=collection_id,
-                  rarity=rarity_name)
-        with self._lock:
-            self.jobs[job.id] = job
-        threading.Thread(target=self._run, args=(job,), daemon=True).start()
-        return job
-
-    def _run(self, job: Job) -> None:
-        try:
-            self.load_currency()
-            col = self.db.collection(job.collection_id)
-            source = CSFloat(self._api_key, calls_per_minute=self.rate)
-            plan = build_plan(self.db, col, RARITES[job.rarity], source,
-                              sell_source=self.revente(), sell_fees=STEAM,
-                              sell_to_usd=1.0 / self.rate_usd)
-            if plan is None:
-                job.state = "empty"
-                job.message = "Pas assez d'annonces en vente pour composer un panier."
-            else:
-                job.plan = plan
-                job.state = "done"
-                # Tout plan calcule entre au journal : il a coute des requetes,
-                # et on veut pouvoir le retrouver meme sans l'avoir suivi.
-                job.plan_id = self.journal.save_plan(
-                    self.job_payload(job)["plan"],
-                    collection_id=job.collection_id,
-                    rarity=job.rarity,
-                )
-        except RateLimited:
-            job.state = "quota"
-            job.message = (
-                "Quota CSFloat epuise. Il porte sur une fenetre longue : "
-                "relancer tout de suite ne sert a rien, attendez 5 a 10 minutes."
-            )
-        except Exception as exc:  # noqa: BLE001 - l'UI doit survivre a tout
-            log.exception("Plan %s en echec", job.id)
-            job.state = "error"
-            job.message = f"{type(exc).__name__} : {exc}"
-
     # --- Balayage complet ----------------------------------------------------
 
-    def start_batch(self, rarity_name: str, *, max_outcomes: int | None = None) -> Batch:
+    def start_batch(self, rarity_name: str) -> Batch:
         cols = self.collections(rarity_name)
-        if max_outcomes is not None:
-            cols = [c for c in cols if c["outcomes"] <= max_outcomes]
         batch = Batch(
             id=uuid.uuid4().hex[:12],
             rarity=rarity_name,
@@ -550,7 +488,8 @@ class App:
         mort n'est pas un candidat moins bon, c'est une perte : le presenter
         dans une liste de recommandations, meme dernier, invite a le lire
         comme une option. Rien n'est perdu pour autant -- tous les plans sont
-        enregistres au journal, l'onglet Historique les retrouve.
+        enregistres au journal, la liste "Plans calcules" de Mes contrats les
+        retrouve.
         """
         retenus = [d for d in batch.done
                    if d.get("profitability", 0.0) >= SEUIL_PROFITABLE]
@@ -571,20 +510,6 @@ class App:
             "results": retenus,
             "failed": batch.failed[-10:],
         }
-
-    def job_payload(self, job: Job) -> dict:
-        base = {
-            "id": job.id,
-            "state": job.state,
-            "elapsed": round(job.elapsed),
-            "message": job.message,
-            "plan_id": job.plan_id,
-        }
-        if job.state != "done" or job.plan is None:
-            return base
-
-        base["plan"] = self._plan_dict(job.plan)
-        return base
 
     def _plan_dict(self, plan: Plan) -> dict:
         """Serialise un plan, montants convertis dans la devise du compte.
@@ -680,12 +605,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "rarete inconnue"}, 400)
                 return
             self._json({"collections": self.app.collections(rarity)})
-        elif route.path.startswith("/api/job/"):
-            job = self.app.jobs.get(route.path.rsplit("/", 1)[-1])
-            if job is None:
-                self._json({"error": "tache inconnue"}, 404)
-                return
-            self._json(self.app.job_payload(job))
         elif route.path == "/api/status":
             # Deux requetes CSFloat au plus, une fois par processus, et elles
             # ne cotent aucun objet. C'est le prix d'une en-tete qui dit vrai :
@@ -725,8 +644,9 @@ class Handler(BaseHTTPRequestHandler):
         elif route.path == "/api/latest":
             # Ce que la nuit a trouve. Aucune requete, aucune attente : un
             # balayage complet dure plus d'une heure, il n'a pas a etre refait
-            # parce qu'on ouvre la page.
-            rarity = (params.get("rarity") or ["industrial"])[0]
+            # parce qu'on ouvre la page. Mil-Spec par defaut : c'est la rarete
+            # que balayage_nuit.cmd calcule.
+            rarity = (params.get("rarity") or ["mil-spec"])[0]
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
@@ -757,13 +677,6 @@ class Handler(BaseHTTPRequestHandler):
                     for c in self.app.journal.contracts(include_done=not actifs)
                 ]
             })
-        elif route.path.startswith("/report/"):
-            job = self.app.jobs.get(route.path.rsplit("/", 1)[-1])
-            if job is None or job.plan is None:
-                self._send(404, b"rapport indisponible", "text/plain; charset=utf-8")
-                return
-            html = render_report(job.plan)
-            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         else:
             self._send(404, b"introuvable", "text/plain; charset=utf-8")
 
@@ -791,10 +704,7 @@ class Handler(BaseHTTPRequestHandler):
             if rarity not in RARITES:
                 self._json({"error": "rarete inconnue"}, 400)
                 return
-            maxi = corps.get("max_outcomes")
-            batch = self.app.start_batch(
-                rarity, max_outcomes=int(maxi) if maxi else None
-            )
+            batch = self.app.start_batch(rarity)
             self._json({"batch": batch.id, "total": batch.total})
             return
         if chemin == "/api/batch/stop":
@@ -845,18 +755,7 @@ class Handler(BaseHTTPRequestHandler):
                     j.set_notes(cid, corps["notes"])
             self._json({"ok": True})
             return
-        if chemin != "/api/plan":
-            self._send(404, b"introuvable", "text/plain; charset=utf-8")
-            return
-
-        cid, rarity = corps.get("collection"), corps.get("rarity", "mil-spec")
-        if not cid or cid not in self.app.db.collections:
-            self._json({"error": "collection inconnue"}, 400)
-            return
-        if rarity not in RARITES:
-            self._json({"error": "rarete inconnue"}, 400)
-            return
-        self._json({"job": self.app.start_plan(cid, rarity).id})
+        self._send(404, b"introuvable", "text/plain; charset=utf-8")
 
 
 def serve(*, host: str = "127.0.0.1", port: int = 8765, rate: int = 10,
@@ -908,11 +807,10 @@ padding:22px 14px 18px;background:var(--card);border-right:1px solid var(--line)
 .marque{display:flex;align-items:center;gap:9px;font-size:18px;font-weight:750;
 padding:0 10px 22px;letter-spacing:-.01em}
 .marque svg{width:22px;height:22px;color:var(--accent)}
-.side .tabs{flex-direction:column;gap:2px;margin:0;border:0}
-.side .tab{display:flex;align-items:center;gap:10px;padding:8px 10px;border:0;
-border-radius:8px;font-weight:550}
-.side .tab:hover{background:var(--bg);color:var(--ink)}
-.side .tab.on{background:var(--bg);color:var(--ink)}
+.side .tabs{display:flex;flex-direction:column;gap:2px}
+.side .tab{display:flex;align-items:center;gap:10px;padding:8px 10px;
+border-radius:8px;font-weight:550;color:var(--muted);cursor:pointer}
+.side .tab:hover,.side .tab.on{background:var(--bg);color:var(--ink)}
 .tab svg{width:17px;height:17px;flex:none}
 .compte{margin-left:auto;min-width:22px;padding:0 6px;border:1px solid var(--line);
 border-radius:10px;font-size:12px;text-align:center;color:var(--muted)}
@@ -1021,11 +919,9 @@ border-bottom:1px solid var(--line)}
 .stats,.stats.agenda{grid-template-columns:1fr 1fr}
 .stats.agenda>div:first-child{grid-column:1/-1}
 }
-/* Pleine largeur. Les TABLEAUX gagnent a s'etaler -- c'est la que la place
-   sert. La PROSE non : une ligne de 2000 px ne se lit plus, l'oeil perd le
-   debut de la ligne suivante. D'ou la mesure limitee sur les paragraphes
-   seulement, pas sur ce qui les contient. */
-.wrap{max-width:none;margin:0}
+/* Les TABLEAUX gagnent a s'etaler, la PROSE non : une ligne de 2000 px ne
+   se lit plus, l'oeil perd le debut de la ligne suivante. D'ou une mesure
+   limitee sur les paragraphes seulement. */
 p.muted,.warn{max-width:88ch}
 /* Les cartes se mettent cote a cote des que la largeur le permet, au lieu de
    laisser la moitie de l'ecran vide sous une colonne unique.
@@ -1048,7 +944,6 @@ grid-template-columns:repeat(auto-fill,minmax(640px,1fr))}
    cela il occupe une cellule et decale toutes les cartes d'un cran. */
 .grille>p,.grille>.plein{grid-column:1/-1;margin:0}
 h1{font-size:22px;margin:0 0 4px}
-.sub{color:var(--muted);font-size:13px;margin-bottom:18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
 padding:18px;margin-bottom:14px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
@@ -1067,13 +962,6 @@ white-space:nowrap}
 td.libre{white-space:normal;min-width:20ch}
 th{font-size:12px;color:var(--muted)}
 td.num,th.num{text-align:right}
-tr.pick{cursor:pointer}
-tr.pick:hover{background:var(--warn-bg)}
-tr.sel{outline:2px solid var(--accent);outline-offset:-2px}
-.tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
-.tab{padding:8px 16px;cursor:pointer;border-bottom:2px solid transparent;
-color:var(--muted);font-weight:600}
-.tab.on{color:var(--ink);border-bottom-color:var(--accent)}
 .pane{display:none}.pane.on{display:block}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
 button.sm{padding:3px 10px;font-size:13px}
@@ -1092,10 +980,6 @@ background:var(--warn-bg);color:var(--warn);font-weight:600}
 .tag[title]{cursor:help}
 .marques{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
 .marques:empty{display:none}
-.kpis{display:flex;gap:20px;flex-wrap:wrap}
-.kpi{flex:1 1 120px}
-.kpi .lab{color:var(--muted);font-size:12px;text-transform:uppercase}
-.kpi .val{font-size:22px;font-weight:650}
 .pos{color:var(--pos)}.neg{color:var(--neg)}
 .warn{background:var(--warn-bg);border-left:3px solid var(--warn);padding:10px 12px;
 border-radius:0 7px 7px 0;margin-bottom:10px;font-size:14px}
@@ -1179,8 +1063,8 @@ vertical-align:-2px;margin-right:7px}
       <label>Rareté d’entrée
         <select id="rarity">
           <option value="consumer">Consumer</option>
-          <option value="industrial" selected>Industrial</option>
-          <option value="mil-spec">Mil-Spec</option>
+          <option value="industrial">Industrial</option>
+          <option value="mil-spec" selected>Mil-Spec</option>
           <option value="restricted">Restricted</option>
           <option value="classified">Classified</option>
         </select>
@@ -1222,11 +1106,11 @@ vertical-align:-2px;margin-right:7px}
     </div>
   </section>
   <div class="card">
-    <p class="muted">Contrats realisables avec les skins que vous possedez deja.
-    Les entrees sont valorisees a ce qu'elles rapporteraient <b>revendues</b> :
-    fondre un skin, c'est renoncer a le vendre. Le prix que vous l'avez paye
-    n'entre pas dans le calcul &mdash; il est deja depense quoi que vous
-    decidiez.</p>
+    <p class="muted">Contrats réalisables avec les skins que vous possédez déjà.
+    Les entrées sont valorisées à ce qu’elles rapporteraient <b>revendues</b> :
+    fondre un skin, c’est renoncer à le vendre. Le prix que vous l’avez payé
+    n’entre pas dans le calcul &mdash; il est déjà dépensé quoi que vous
+    décidiez.</p>
     <div id="inv-bilan" class="muted">chargement&hellip;</div>
     <div class="row" style="border-top:1px solid var(--line);padding-top:12px;
       margin:12px 0 0">
@@ -1248,12 +1132,12 @@ vertical-align:-2px;margin-right:7px}
   </section>
   <div id="contrats" class="kanban"></div>
   <div class="card">
-    <div class="etape">Plans calcules</div>
-    <p class="muted">Tout plan calcule est conserve : il a coute des requetes.
+    <div class="etape">Plans calculés</div>
+    <p class="muted">Tout plan calculé est conservé : il a coûté des requêtes.
     &laquo;&nbsp;Suivre&nbsp;&raquo; en fait un contrat auquel rattacher vos
-    achats reels.</p>
+    achats réels.</p>
     <div class="scroll"><table>
-      <thead><tr><th>Date</th><th>Collection</th><th class="num">Cout</th>
+      <thead><tr><th>Date</th><th>Collection</th><th class="num">Coût</th>
         <th class="num">Profit</th><th class="num">Rendement</th>
         <th class="num">Suivis</th><th></th></tr></thead>
       <tbody id="histo"></tbody>
@@ -1863,7 +1747,7 @@ async function histo() {
     <td class="num">${p.followed || '-'}</td>
     <td><button class="ghost sm" data-voir="${p.id}">Voir</button>
         <button class="sm" data-follow="${p.id}">Suivre</button></td></tr>`).join('')
-    : '<tr><td colspan="7" class="muted">aucun plan calcule pour le moment</td></tr>';
+    : '<tr><td colspan="7" class="muted">aucun plan calculé pour le moment</td></tr>';
 }
 
 // --- Contrats suivis, en colonnes -------------------------------------------
@@ -1931,10 +1815,10 @@ function quandContrat(c) {
 function deriveContrat(c) {
   if (c.float_drift === null || c.float_drift === undefined) return '';
   const gros = Math.abs(c.float_drift) > 0.003;
-  return '<div class="' + (gros ? 'warn' : 'muted') + '">Float moyen reel : <b>' +
-    c.actual_avg_float.toFixed(4) + '</b> (prevu ' + c.planned_avg_float.toFixed(4) +
-    ', ecart ' + (c.float_drift >= 0 ? '+' : '') + c.float_drift.toFixed(4) + ')' +
-    (gros ? ' &mdash; verifiez que la sortie n&rsquo;a pas change de palier.' : '') +
+  return '<div class="' + (gros ? 'warn' : 'muted') + '">Float moyen réel : <b>' +
+    c.actual_avg_float.toFixed(4) + '</b> (prévu ' + c.planned_avg_float.toFixed(4) +
+    ', écart ' + (c.float_drift >= 0 ? '+' : '') + c.float_drift.toFixed(4) + ')' +
+    (gros ? ' &mdash; vérifiez que la sortie n&rsquo;a pas changé de palier.' : '') +
     '</div>';
 }
 
@@ -1959,11 +1843,11 @@ function detailContrat(c) {
   const lignes = c.items.map(i => {
     const verrou = i.purchased
       ? (i.locked ? 'jusqu&rsquo;au ' + dt(i.tradable_at) : 'libre')
-      : '<span class="muted">non achete</span>';
+      : '<span class="muted">non acheté</span>';
     const actions = i.purchased
       ? '<button class="ghost sm" data-item="' + i.id + '" data-act="annuler">Annuler l’achat</button>'
       : (i.url ? '<a class="buy" href="' + i.url + '" target="_blank">Acheter</a> ' : '') +
-        '<button class="sm" data-item="' + i.id + '" data-act="acheter">Achete</button>';
+        '<button class="sm" data-item="' + i.id + '" data-act="acheter">Acheté</button>';
     return '<tr class="' + (i.purchased ? 'done' : '') + '"><td>' + i.name +
       (i.from_plan ? '' : ' <span class="tag">substitut</span>') +
       '</td><td class="num">' + i.float.toFixed(4) +
@@ -2067,9 +1951,9 @@ document.addEventListener('click', async e => {
   if (it) {
     const corps = {item: it.dataset.item, action: it.dataset.act};
     if (it.dataset.act === 'acheter') {
-      const p = prompt('Prix reellement paye (vide = prix du plan)');
+      const p = prompt('Prix réellement payé (vide = prix du plan)');
       if (p) corps.price = p;
-      const fl = prompt('Float reel (vide = float du plan)');
+      const fl = prompt('Float réel (vide = float du plan)');
       if (fl) corps.float = fl;
     }
     await fetch('/api/item', {method: 'POST',

@@ -16,7 +16,7 @@ import pytest
 
 from tradeupfinder.db import SkinDatabase
 from tradeupfinder.pricing.http import RateLimited
-from tradeupfinder.web import App, Job
+from tradeupfinder.web import App
 
 RAW_DB = {
     "version": "test",
@@ -76,64 +76,72 @@ def test_rarete_sans_collection_exploitable(app):
     assert app.collections("classified") == []
 
 
-# --- Taches ------------------------------------------------------------------
+# --- Balayages : un echec doit donner un etat lisible -------------------------
+# La page interroge l'avancement toutes les 5 s. Quoi qu'il arrive a une
+# collection, elle doit obtenir une reponse exploitable, jamais un balayage
+# fige ni une collection perdue en silence.
 
 
-def test_le_quota_epuise_donne_un_etat_lisible(app, monkeypatch):
+def _balayer(app, monkeypatch, build_plan):
+    monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
+    monkeypatch.setattr(app, "load_currency", lambda: None)
+    monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
+    monkeypatch.setattr(app, "revente", lambda: None)
+    return app.start_batch("mil-spec")
+
+
+def _attendre(batch, *etats: str, timeout: float = 5.0) -> None:
+    debut = time.time()
+    while batch.state not in etats and time.time() - debut < timeout:
+        time.sleep(0.01)
+    assert batch.state in etats, f"balayage bloque en {batch.state}"
+
+
+def test_le_quota_epuise_met_le_balayage_en_pause(app, monkeypatch):
     def boom(*a, **kw):
         raise RateLimited("429")
 
-    monkeypatch.setattr("tradeupfinder.web.build_plan", boom)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, boom)
+    _attendre(batch, "paused")
+    try:
+        # La collection reste dans la file : le quota reviendra, et la perdre
+        # serait un trou silencieux dans le balayage.
+        assert batch.pending[0] == "col_a" and not batch.failed
+        payload = app.batch_payload(batch)
+        assert payload["state"] == "paused" and payload["resume_in"] > 0
+        assert "quota" in payload["message"].lower()
+    finally:
+        batch.state = "stopped"  # libere le thread, qui attendrait 10 min
 
-    assert job.state == "quota"
-    assert "attendez" in job.message.lower()
-    payload = app.job_payload(job)
-    assert payload["state"] == "quota" and "plan" not in payload
 
+def test_une_erreur_inattendue_ne_bloque_pas_le_balayage(app, monkeypatch):
+    def casse(*a, **kw):
+        raise ValueError("casse")
 
-def test_une_erreur_inattendue_ne_bloque_pas_l_interface(app, monkeypatch):
-    monkeypatch.setattr(
-        "tradeupfinder.web.build_plan",
-        lambda *a, **kw: (_ for _ in ()).throw(ValueError("casse")),
-    )
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, casse)
+    _attendre(batch, "finished")
 
-    assert job.state == "error"
-    assert "ValueError" in job.message
-    assert app.job_payload(job)["state"] == "error"
+    # Chaque collection est signalee, et la seconde a quand meme ete tentee.
+    assert [f["error"] for f in batch.failed] == ["casse", "casse"]
+    assert app.batch_payload(batch)["state"] == "finished"
 
 
 def test_absence_d_annonces_est_distinguee_d_une_erreur(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(batch, "finished")
 
-    assert job.state == "empty"
-    assert "annonces" in job.message.lower()
-
-
-def test_deux_taches_coexistent(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    a = app.start_plan("col_a", "mil-spec")
-    b = app.start_plan("col_b", "mil-spec")
-    assert a.id != b.id
-    _attendre(a)
-    _attendre(b)
-    assert set(app.jobs) == {a.id, b.id}
+    assert batch.failed and all("annonces" in f["error"] for f in batch.failed)
 
 
 # --- Fuite de secret ---------------------------------------------------------
 
 
 def test_la_cle_api_ne_sort_jamais(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(batch, "finished")
 
-    tout = json.dumps(app.job_payload(job)) + json.dumps(app.collections("mil-spec"))
+    tout = (json.dumps(app.batch_payload(batch))
+            + json.dumps(app.collections("mil-spec")))
     assert "cle-secrete" not in tout
     # Meme partiellement : pas de fragment exploitable.
     assert "secrete" not in tout
@@ -144,13 +152,6 @@ def test_la_page_ne_contient_aucun_secret():
 
     assert "CSFLOAT_API_KEY" not in PAGE
     assert "Authorization" not in PAGE
-
-
-def _attendre(job: Job, timeout: float = 5.0) -> None:
-    debut = time.time()
-    while job.state == "running" and time.time() - debut < timeout:
-        time.sleep(0.01)
-    assert job.state != "running", "la tache n'a pas abouti"
 
 
 # --- Contrats exposes par l'API ----------------------------------------------

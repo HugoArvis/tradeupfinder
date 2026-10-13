@@ -12,9 +12,6 @@ precis il faut passer par CSFloat.
 from __future__ import annotations
 
 import logging
-import re
-import urllib.parse
-from dataclasses import dataclass
 
 from .base import PriceSource, Quote, parse_money, parse_volume
 from .cache import QuoteCache
@@ -23,35 +20,10 @@ from .http import HttpClient, RateLimiter
 log = logging.getLogger(__name__)
 
 PRICEOVERVIEW_URL = "https://steamcommunity.com/market/priceoverview/"
-ITEM_ORDERS_URL = "https://steamcommunity.com/market/itemordershistogram"
 CS2_APPID = 730
 
 # Codes de devise Steam les plus courants.
 CURRENCIES = {"USD": 1, "GBP": 2, "EUR": 3, "CHF": 4, "RUB": 5, "BRL": 7, "CAD": 20}
-
-
-@dataclass(frozen=True, slots=True)
-class OrderBook:
-    """Meilleur ordre d'achat et meilleure offre de vente pour un objet."""
-
-    market_hash_name: str
-    highest_buy_order: float | None
-    lowest_sell_order: float | None
-    currency: str = "EUR"
-
-    @property
-    def spread(self) -> float | None:
-        """Ecart absolu entre acheter tout de suite et placer un ordre."""
-        if self.highest_buy_order is None or self.lowest_sell_order is None:
-            return None
-        return self.lowest_sell_order - self.highest_buy_order
-
-    @property
-    def savings_ratio(self) -> float | None:
-        """Fraction economisee en passant par un ordre d'achat."""
-        if self.spread is None or not self.lowest_sell_order:
-            return None
-        return self.spread / self.lowest_sell_order
 
 
 class SteamMarket(PriceSource):
@@ -82,7 +54,6 @@ class SteamMarket(PriceSource):
             headers={"Accept": "application/json, text/javascript, */*"},
         )
         self.stats = {"hits_cache": 0, "appels_api": 0, "introuvables": 0}
-        self._name_ids: dict[str, str | None] = {}
 
     def fetch(self, market_hash_name: str, *, use_cache: bool = True) -> Quote | None:
         if use_cache and self.cache:
@@ -129,74 +100,3 @@ class SteamMarket(PriceSource):
         if self.cache:
             self.cache.put(quote)
         return quote
-
-    def order_book(self, market_hash_name: str) -> "OrderBook | None":
-        """Carnet d'ordres Steam : meilleur ordre d'ACHAT et meilleure vente.
-
-        `priceoverview` ne donne que le cote vente. Or placer un ordre d'achat
-        au lieu d'acheter au prix demande change le cout d'acquisition, et donc
-        toute la rentabilite d'un trade-up. L'ecart entre les deux est ce qu'un
-        ordre d'achat permet d'economiser -- au prix d'un delai de remplissage.
-
-        Steam expose ce carnet, mais indexe par un identifiant interne
-        (`item_nameid`) qui n'apparaissait que dans le HTML de la page de
-        l'objet. On le recupere donc en deux temps.
-
-        ATTENTION -- NE FONCTIONNE PLUS (verifie en aout 2026). Steam a
-        reecrit ses pages de marche en application cliente : le HTML servi ne
-        contient plus ni `item_nameid` ni `Market_LoadOrderSpread`, et aucune
-        fonction `Market_*`. La methode renvoie donc None sur tous les objets.
-
-        Recuperer le carnet demanderait soit une session authentifiee, soit de
-        rejouer l'appel que fait le client web. En attendant, le gain d'un
-        ordre d'achat doit etre saisi a la main : il se lit directement sur la
-        page de l'objet dans un navigateur.
-        """
-        name_id = self._item_name_id(market_hash_name)
-        if name_id is None:
-            return None
-
-        data = self.client.get_json(
-            ITEM_ORDERS_URL,
-            {
-                "country": "FR",
-                "language": "english",
-                "currency": CURRENCIES[self.currency],
-                "item_nameid": name_id,
-                "two_factor": 0,
-            },
-        )
-        if not isinstance(data, dict) or not data.get("success"):
-            return None
-
-        achat = parse_money(data.get("highest_buy_order"))
-        vente = parse_money(data.get("lowest_sell_order"))
-        # Steam renvoie ces deux champs en centimes bruts, pas en texte formate.
-        if achat is not None and achat > 1000:
-            achat /= 100.0
-        if vente is not None and vente > 1000:
-            vente /= 100.0
-        if achat is None and vente is None:
-            return None
-        return OrderBook(
-            market_hash_name=market_hash_name,
-            highest_buy_order=achat,
-            lowest_sell_order=vente,
-            currency=self.currency,
-        )
-
-    def _item_name_id(self, market_hash_name: str) -> str | None:
-        if market_hash_name in self._name_ids:
-            return self._name_ids[market_hash_name]
-        url = (
-            f"https://steamcommunity.com/market/listings/{CS2_APPID}/"
-            f"{urllib.parse.quote(market_hash_name)}"
-        )
-        html = self.client.get_text(url)
-        if not html:
-            self._name_ids[market_hash_name] = None
-            return None
-        m = re.search(r"Market_LoadOrderSpread\(\s*(\d+)\s*\)", html)
-        found = m.group(1) if m else None
-        self._name_ids[market_hash_name] = found
-        return found

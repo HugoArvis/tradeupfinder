@@ -25,7 +25,7 @@ from .generator import InputOption, cheapest_unique_selection, options_from_list
 from .models import Collection, Rarity
 from .pricing.base import PriceSource, Quote
 from .pricing.csfloat import CSFloat
-from .wear import TRADEUP_INPUT_COUNT, wear_breakpoints, wear_of
+from .wear import TRADEUP_INPUT_COUNT, wear_breakpoints
 
 log = logging.getLogger(__name__)
 
@@ -883,99 +883,6 @@ def _breakpoints_avec_annonces(
     garde.update(ordonnes[:5])
     garde.update(ordonnes[-5:])
     return sorted(garde)
-
-
-@dataclass(frozen=True, slots=True)
-class Repetition:
-    """Un contrat dans une serie, avec le prix realise a la revente."""
-
-    rang: int
-    cout: float
-    net_revente: float
-
-    @property
-    def profit(self) -> float:
-        return self.net_revente - self.cout
-
-
-def plan_series(
-    db: SkinDatabase,
-    collection: Collection,
-    rarity: Rarity,
-    source: CSFloat,
-    *,
-    max_contracts: int = 20,
-    listings_per_skin: int = 50,
-    sell_fee: float = 0.02,
-    safety_margin: float = 0.05,
-    float_margin: float = 0.005,
-) -> list[Repetition]:
-    """Combien de fois le contrat reste rentable, carnet d'ordres a l'appui.
-
-    Repeter un contrat n'est pas repeter le meme prix. Deux effets s'usent :
-
-      - a l'ACHAT, chaque panier consomme les annonces les moins cheres ; le
-        suivant paie plus cher.
-      - a la REVENTE, ecouler N exemplaires oblige a descendre dans le carnet :
-        le k-ieme se vend autour du k-ieme meilleur prix existant.
-
-    On s'arrete des que le profit marginal devient negatif. Le resultat n'est
-    pas une prevision mais un ordre de grandeur : il suppose que personne
-    d'autre ne bouge pendant ce temps.
-    """
-    outcomes = collection.outcomes_for_input_rarity(rarity)
-    if len(outcomes) != 1:
-        raise ValueError(
-            "plan_series ne traite que les collections a sortie unique "
-            f"({collection.name} en a {len(outcomes)})"
-        )
-    cible = outcomes[0]
-
-    # --- Pool d'achat, recupere une seule fois ---
-    pool: list[InputOption] = []
-    for skin in collection.by_rarity(rarity):
-        for wear in skin.available_wears():
-            offres = source.listings(skin.market_hash_name(wear), limit=listings_per_skin)
-            pool.extend(options_from_listings(skin, offres))
-
-    # --- Carnet de revente : les prix qu'il faudra battre, dans l'ordre ---
-    serie: list[Repetition] = []
-    restant = list(pool)
-
-    for rang in range(1, max_contracts + 1):
-        meilleur_cout = None
-        meilleure_selection = None
-        meilleur_net = None
-
-        for hi in wear_breakpoints([cible])[1:]:
-            budget = (hi - max(float_margin, 1e-9)) * TRADEUP_INPUT_COUNT
-            sel = cheapest_unique_selection(restant, TRADEUP_INPUT_COUNT, budget)
-            if sel is None:
-                continue
-            moyenne = sum(o.normalized for o in sel) / TRADEUP_INPUT_COUNT
-            usure = wear_of(moyenne * cible.float_span + cible.min_float)
-            asks = sorted(
-                o.price for o in source.listings(
-                    cible.market_hash_name(usure), limit=listings_per_skin
-                )
-            )
-            if not asks:
-                continue
-            # Le k-ieme exemplaire vendu s'ecoule autour du k-ieme meilleur prix.
-            ask = asks[min(rang - 1, len(asks) - 1)]
-            net = ask * (1 - sell_fee) * (1 - safety_margin)
-            cout = sum(o.unit_cost for o in sel)
-            if meilleur_cout is None or net - cout > meilleur_net - meilleur_cout:
-                meilleur_cout, meilleure_selection, meilleur_net = cout, sel, net
-
-        if meilleure_selection is None or meilleur_net - meilleur_cout <= 0:
-            break
-
-        serie.append(Repetition(rang=rang, cout=meilleur_cout, net_revente=meilleur_net))
-        utilisees = {id(o) for o in meilleure_selection}
-        restant = [o for o in restant if id(o) not in utilisees]
-
-    return serie
 
 
 def _net_si_palier_rate(result: TradeUpResult, pricer: CSFloatPricer) -> float | None:

@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .ev import Outcome, PriceLookup, TradeUpResult
+from .ev import Outcome, PriceLookup
 from .models import Rarity, Skin, Wear
 from .wear import output_float, wear_of
 

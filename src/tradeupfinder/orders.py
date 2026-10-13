@@ -35,7 +35,7 @@ DEUX CONSEQUENCES A NE PAS OUBLIER
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .db import SkinDatabase
@@ -203,8 +203,8 @@ class OrderPlan:
             )
         lignes.append("")
         lignes.append(
-            f"  Le float sera TIRE au hasard dans le palier : un ordre d'achat "
-            f"ne le choisit pas."
+            "  Le float sera TIRE au hasard dans le palier : un ordre d'achat "
+            "ne le choisit pas."
         )
         lignes.append(
             f"  Une fois les ordres servis : {self.win_probability:.0%} de "

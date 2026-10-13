@@ -5,7 +5,7 @@ PORTEE DE CES TESTS -- a lire avant de leur faire confiance.
 Ils valident la logique de parsing et de selection A SCHEMA DONNE. Ils ne
 valident PAS que le schema suppose est le bon : les reponses simulees ici sont
 ecrites a partir de la meme hypothese que le code (`data[].item.float_value`,
-prix en centimes, parametre `max_float`). Si cette hypothese est fausse, ces
+prix en centimes). Si cette hypothese est fausse, ces
 tests passent au vert en confirmant l'erreur.
 
 Seul un appel reel avec une cle API peut lever ce doute. Voir README, section
@@ -96,64 +96,20 @@ def test_float_absent_donne_has_float_false():
 # --- Parametres envoyes ------------------------------------------------------
 
 
-def test_les_filtres_de_float_sont_transmis_au_serveur():
+def test_les_parametres_de_recherche_sont_transmis_au_serveur():
     src, client = make_source({"data": []})
-    src.listings("AK-47 | Redline (Field-Tested)", max_float=0.08, min_float=0.01)
+    src.listings("AK-47 | Redline (Field-Tested)")
 
     _, params = client.calls[0]
-    assert params["max_float"] == 0.08
-    assert params["min_float"] == 0.01
     assert params["market_hash_name"] == "AK-47 | Redline (Field-Tested)"
     assert params["type"] == "buy_now"
     assert params["sort_by"] == "lowest_price"
-
-
-def test_les_filtres_absents_ne_sont_pas_envoyes():
-    src, client = make_source({"data": []})
-    src.listings("x")
-    _, params = client.calls[0]
-    assert "max_float" not in params and "min_float" not in params
 
 
 def test_limite_plafonnee_a_50():
     src, client = make_source({"data": []})
     src.listings("x", limit=500)
     assert client.calls[0][1]["limit"] == 50
-
-
-# --- Selection ---------------------------------------------------------------
-
-
-def test_cheapest_at_float_refiltre_cote_client():
-    """Le filtre serveur n'est pas cru sur parole.
-
-    Si l'API ignore `max_float` (parametre renomme, quota, bug), accepter sa
-    reponse telle quelle ferait acheter un objet hors contrainte -- et ferait
-    derailler la moyenne de float du contrat.
-    """
-    src, _ = make_source(
-        {
-            "data": [
-                make_row("cher_conforme", 1000, float_value=0.04),
-                make_row("pas_cher_hors_contrainte", 100, float_value=0.30),
-                make_row("moyen_conforme", 500, float_value=0.06),
-            ]
-        }
-    )
-    best = src.cheapest_at_float("x", max_float=0.07)
-    assert best is not None
-    assert best.listing_id == "moyen_conforme"  # pas le moins cher dans l'absolu
-    assert best.float_value <= 0.07
-
-
-def test_cheapest_at_float_sans_candidat():
-    src, _ = make_source({"data": [make_row("a", 100, float_value=0.5)]})
-    assert src.cheapest_at_float("x", max_float=0.07) is None
-
-
-def test_cheapest_at_float_ignore_les_offres_sans_float():
-    src, _ = make_source({"data": [make_row("a", 100, float_value=None)]})
-    assert src.cheapest_at_float("x", max_float=0.07) is None
 
 
 # --- Cotation agregee --------------------------------------------------------

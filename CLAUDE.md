@@ -54,7 +54,7 @@ ouvre la pull request avec la bonne base.
 ```bash
 python -m pip install -e ".[dev]"     # `pip` seul vise Python 3.9, pas 3.11
 python -m scripts.build_db            # (re)construit data/collections.json
-python -m pytest -q                   # 150 tests, < 15 s
+python -m pytest -q                   # ~390 tests, < 15 s
 python -m pytest tests/test_core.py -k probabilites
 python scripts/check_js.py            # apres toute retouche du JS de web.py
 python -m tradeupfinder.web                 # application locale, port 8765
@@ -648,8 +648,9 @@ tentative mourait en 80 secondes sur la première cotation non mise en cache.
 Steam renvoie par ailleurs `success=true` **sans aucun champ de prix** pour un
 objet sans annonce : `Quote.is_empty` distingue ce cas d'une erreur.
 
-Steam limite à ~15 req/min et ne donne aucun float. `SteamMarket.order_book()`
-est mort, mais pas pour la raison qu'on croit : **l'endpoint
+Steam limite à ~15 req/min et ne donne aucun float. Son carnet d'ordres est
+inaccessible — `SteamMarket.order_book()`, qui le lisait, a été retiré — mais
+pas pour la raison qu'on croit : **l'endpoint
 `itemordershistogram` répond toujours** (`success=1`, `highest_buy_order`
 renseigné, vérifié en septembre 2026). C'est la table nom → `item_nameid` qui
 est perdue — les pages marché sont devenues une application cliente qui adresse

@@ -132,7 +132,7 @@ def test_les_recettes_stattrak_ne_piochent_que_dans_les_bonnes_collections(db):
     assert recettes
     utilisables = {c.id for c in db.tradeable_collections(Rarity.MIL_SPEC, True)}
     for r in recettes:
-        assert set(r.collection_ids) <= utilisables
+        assert {cid for cid, _ in r.counts} <= utilisables
 
 
 # --- Bout en bout ------------------------------------------------------------

@@ -51,7 +51,6 @@ from .daily import (
     Ligne,
     Passage,
     age_max,
-    historique,
     journaliser,
     noms_prioritaires,
     recoter,
@@ -423,9 +422,9 @@ def cmd_plan(args) -> int:
     tolerance = plan.price_drop_tolerance
     if tolerance is not None:
         print(
-            f"\nBLOCAGE 7 JOURS : les entrees achetees aujourd'hui ne seront "
-            f"utilisables\n  dans un contrat que dans 7 jours. Vous revendrez "
-            f"donc une semaine plus tard."
+            "\nBLOCAGE 7 JOURS : les entrees achetees aujourd'hui ne seront "
+            "utilisables\n  dans un contrat que dans 7 jours. Vous revendrez "
+            "donc une semaine plus tard."
         )
         print(
             f"  Le prix de sortie peut baisser de {tolerance:.1%} d'ici la "
@@ -1037,7 +1036,6 @@ def cmd_daily(args) -> int:
     pricer, cache = _make_pricer(args)
     screen = ScreenConfig(min_ev_profit=-1e9, min_roi=-1.0,
                           min_profit_probability=0.0,
-                          min_outcome_volume=args.min_volume or None,
                           max_unpriced_probability=args.max_unpriced)
     avant, _ = scan(db, pricer, rarity, screen=screen, ranking=Ranking.ROI,
                     float_model=args.float_model,
@@ -1323,10 +1321,10 @@ def cmd_sweep(args) -> int:
               f"premier.", file=sys.stderr)
 
     print(f"{len(cols)} collections a calculer en {rarity.label}.", file=sys.stderr)
-    print(f"  ACHAT sur CSFloat, REVENTE estimee sur Steam. Les prix d'entree "
-          f"affiches sont ceux de CSFloat", file=sys.stderr)
-    print(f"  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
-          f"sans que l'un des deux soit faux.", file=sys.stderr)
+    print("  ACHAT sur CSFloat, REVENTE estimee sur Steam. Les prix d'entree "
+          "affiches sont ceux de CSFloat", file=sys.stderr)
+    print("  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
+          "sans que l'un des deux soit faux.", file=sys.stderr)
     file = list(cols)
     faits, echecs, rentables = 0, 0, 0
     debut = _t.time()
