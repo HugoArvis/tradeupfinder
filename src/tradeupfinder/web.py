@@ -96,6 +96,8 @@ class Batch:
     message: str = ""
     started: float = field(default_factory=time.time)
     resume_at: float = 0.0
+    #: Collections reprises du journal au lieu d'etre recalculees.
+    reused: int = 0
 
     @property
     def progress(self) -> float:
@@ -128,6 +130,34 @@ class InventoryJob:
 # Convention des guides et des calculateurs : 1.0 est le point mort, pas le
 # profit. En dessous, le contrat detruit de la valeur.
 SEUIL_PROFITABLE = 1.0
+
+#: Une collection calculee depuis moins longtemps n'est pas recalculee par un
+#: balayage : son plan est repris du journal. Au-dela, ses annonces ont pu
+#: partir -- un plan est perissable.
+RECALCUL_APRES = 6 * 3600
+
+
+def _ligne_resultat(plan_id: str, collection: str, rarity: str, payload: dict) -> dict:
+    """Une collection traitee, telle que la liste d'un balayage la montre.
+
+    Partagee par le calcul et par la reprise du journal : un plan repris doit
+    se lire exactement comme un plan qu'on vient de calculer.
+    """
+    return {
+        "plan_id": plan_id,
+        "collection": collection,
+        "rarity": RARITES[rarity].label,
+        "cost": payload["cost"],
+        "net": payload["net"],
+        "profit": payload["profit"],
+        "roi": payload["roi"],
+        "profitability": payload.get("profitability", 0.0),
+        "outcomes": len(payload["outcomes"]),
+        "worst_profit": payload.get("worst_profit"),
+        "all_profitable": payload.get("all_profitable", False),
+        "win_probability": payload.get("win_probability", 0.0),
+        "stdev": payload.get("stdev", 0.0),
+    }
 
 
 class App:
@@ -410,6 +440,18 @@ class App:
         second ; c'est donc le serveur qui refuse.
         """
         cols = self.collections(rarity_name)
+        # Meme ordre que `sweep` : jamais calculees d'abord, puis les plus
+        # anciennes. Sans lui, un balayage coupe -- serveur relance, quota --
+        # repartait de la premiere collection et refaisait les memes.
+        vues = self.journal.last_swept(rarity_name)
+        recents = self.journal.recent_plans(rarity_name, RECALCUL_APRES)
+        a_faire = sorted((c for c in cols if c["id"] not in recents),
+                         key=lambda c: vues.get(c["id"], 0.0))
+        repris = []
+        for c in cols:
+            if c["id"] in recents:
+                plan_id, payload = recents[c["id"]]
+                repris.append(_ligne_resultat(plan_id, c["name"], rarity_name, payload))
         with self._lock:
             en_cours = self._balayage_en_cours()
             if en_cours is not None:
@@ -417,8 +459,10 @@ class App:
             batch = Batch(
                 id=uuid.uuid4().hex[:12],
                 rarity=rarity_name,
-                pending=[c["id"] for c in cols],
+                pending=[c["id"] for c in a_faire],
                 total=len(cols),
+                done=repris,
+                reused=len(repris),
             )
             self.batches[batch.id] = batch
         threading.Thread(target=self._run_batch, args=(batch,), daemon=True).start()
@@ -485,21 +529,9 @@ class App:
             plan_id = self.journal.save_plan(
                 payload, collection_id=cid, rarity=batch.rarity
             )
-            batch.done.append({
-                "plan_id": plan_id,
-                "collection": col.name,
-                "rarity": RARITES[batch.rarity].label,
-                "cost": payload["cost"],
-                "net": payload["net"],
-                "profit": payload["profit"],
-                "roi": payload["roi"],
-                "profitability": payload.get("profitability", 0.0),
-                "outcomes": len(payload["outcomes"]),
-                "worst_profit": payload.get("worst_profit"),
-                "all_profitable": payload.get("all_profitable", False),
-                "win_probability": payload.get("win_probability", 0.0),
-                "stdev": payload.get("stdev", 0.0),
-            })
+            batch.done.append(
+                _ligne_resultat(plan_id, col.name, batch.rarity, payload)
+            )
 
         if batch.state != "stopped":
             batch.state = "finished"
@@ -532,6 +564,7 @@ class App:
             "resume_in": max(0, round(batch.resume_at - time.time())),
             "currency": self.currency,
             "computed": len(batch.done),
+            "reused": batch.reused,
             "rejected": len(batch.done) - len(retenus),
             "results": retenus,
             "failed": batch.failed[-10:],
@@ -1779,6 +1812,8 @@ async function dessinerBatch(b) {
       sous le point mort, ${b.failed.length} sans assez d’annonces &middot;
       ${Math.round(b.elapsed / 60)} min écoulées &middot; montants en
       ${b.currency}</p>
+    ${b.reused ? `<p class="muted">${b.reused} collection(s) calculée(s) il y
+      a moins de 6 h, reprises telles quelles au lieu d’être recotées.</p>` : ''}
   </div>`;
 
   const cle = b.results.map(x => x.plan_id).join(',') + (fini ? '|fini' : '');
