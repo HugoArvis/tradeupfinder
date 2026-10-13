@@ -667,6 +667,13 @@ def test_le_prix_dordre_sarrondit_vers_le_BAS():
     assert plan.steam_order_lines()[0]["order_price"] == pytest.approx(0.03)
 
 
+def test_larrondi_vers_le_bas_ne_perd_pas_un_centime_au_binaire():
+    """0.58 * 0.5 vaut 0.29, mais 28.999999999999996 une fois multiplie par
+    100 : `int()` tronquait a 0.28. Releve par la relecture de la PR #4."""
+    plan = _plan_minimal(12.0, 20.0, {"A": 0.58}, ["A"] * 10)
+    assert plan.steam_order_lines()[0]["order_price"] == 0.29
+
+
 def test_un_ordre_sous_le_plancher_steam_est_signale():
     """Un ordre sous 0.03 ne sera jamais servi : aucun rabais ne le sauve."""
     plan = _plan_minimal(12.0, 20.0, {"A": 0.03}, ["A"] * 10)

@@ -15,6 +15,7 @@ structurellement meilleur que Steam pour executer un trade-up.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .db import SkinDatabase
@@ -497,25 +498,21 @@ class Plan:
 
         Aucun appel reseau : les prix Steam sont deja dans `alt_prices`.
         """
-        from .orders import STEAM_MIN_PRICE
+        from .orders import STEAM_MIN_PRICE, arrondi_bas_centime
 
         budget = self.steam_order_budget(target_roi)
         if budget is None or not self.alt_cost or not self.alt_prices:
             return None
         facteur = budget / self.alt_cost
 
-        besoins: dict[str, int] = {}
-        for o in self.options:
-            besoins[o.name] = besoins.get(o.name, 0) + 1
-
         lignes = []
-        for nom, qte in besoins.items():
+        for nom, qte in _quantites(self.options).items():
             marche = self.alt_prices.get(nom)
             if marche is None:
                 return None
             # Arrondi vers le BAS au centime : arrondir vers le haut
             # depasserait le budget et mangerait la marge visee.
-            ordre = int(marche * facteur * 100) / 100
+            ordre = arrondi_bas_centime(marche * facteur)
             lignes.append({
                 "name": nom,
                 "quantity": qte,
@@ -784,6 +781,16 @@ def _cout_en_profondeur(toutes, plan) -> float | None:
     return sum(o.unit_cost for o in selection)
 
 
+def _quantites(options) -> Counter[str]:
+    """Le nombre d'exemplaires de chaque objet du panier, dans l'ordre du panier.
+
+    Partage par le cout sur l'autre marche et par les lignes d'ordre : deux
+    regroupements ecrits a part finiraient par compter differemment, et les
+    ordres ne correspondraient plus au cout affiche.
+    """
+    return Counter(o.name for o in options)
+
+
 def _cout_ailleurs(
     source: PriceSource, options, vers_usd: float
 ) -> tuple[float, dict[str, float]] | None:
@@ -799,13 +806,9 @@ def _cout_ailleurs(
     PRIX D'ORDRE par objet : un ordre se place sur un objet a un prix, pas sur
     un panier a un total.
     """
-    besoins: dict[str, int] = {}
-    for o in options:
-        besoins[o.name] = besoins.get(o.name, 0) + 1
-
     total = 0.0
     unitaires: dict[str, float] = {}
-    for nom, qte in besoins.items():
+    for nom, qte in _quantites(options).items():
         try:
             q = source.fetch(nom)
         except Exception:  # noqa: BLE001 - marche indisponible
@@ -1077,6 +1080,9 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # on pose un ordre par objet, a un prix. Sans ce detail, les ordres
         # devaient vivre dans un onglet separe qui refaisait tout le calcul.
         "order_lines": None if lignes is None else [ligne_ordre(l) for l in lignes],
+        # Le plancher lui-meme, pour que la page n'en garde pas une copie qui
+        # divergerait de `below_floor` si la constante changeait.
+        "order_floor": STEAM_MIN_PRICE,
         "worst_profit": opt(plan.worst_profit),
         "best_profit": opt(plan.best_profit),
         "all_profitable": plan.all_outcomes_profitable,

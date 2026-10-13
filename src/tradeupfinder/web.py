@@ -1624,6 +1624,8 @@ function detailOrdres(p) {
   // d'ordre contredirait la ligne juste au-dessus.
   if (p.float_subi_ok === false) return '';
   const revente = p.sell_market || 'Steam';
+  // `order_floor` vient du serveur ; le 0.03 de repli ne sert qu'aux plans
+  // enregistres avant que le payload ne le porte.
   const bloques = p.order_lines.filter(l => l.below_floor).length;
   return `<details>
     <summary>Placer des ordres sur ${revente} — les 10 prix
@@ -1645,7 +1647,7 @@ function detailOrdres(p) {
       </tbody>
     </table></div>
     ${bloques ? `<p class="muted"><b>${bloques} ligne(s) sous le plancher de
-      0,03 de ${revente}</b> : aucun rabais ne peut les sauver, l’ordre ne
+      ${(p.order_floor ?? 0.03).toFixed(2).replace('.', ',')} de ${revente}</b> : aucun rabais ne peut les sauver, l’ordre ne
       serait jamais servi.</p>` : ''}
   </details>`;
 }
