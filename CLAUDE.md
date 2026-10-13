@@ -317,6 +317,28 @@ Trois contraintes que ce mode ne doit pas perdre de vue :
   lieu de les présenter comme des occasions, et `STEAM_MIN_PRICE` (0,03) marque
   ceux qu'aucun rabais ne peut sauver.
 
+**Mais 35 % est très au-delà de ce que Steam sert.** Test réel : deux ordres
+posés fin septembre 2026 sur les entrées du contrat Arabesque, relevés le
+12 octobre — **zéro exécution en 14 jours** :
+
+| ordre | prix | plus basse annonce | médiane | écart | ventes / 24 h |
+|---|---|---|---|---|---|
+| FAMAS \| Snake Song (WW) × 12 | 0,19 € | 0,28 € | 0,26 € | −32 % | 62 à 112 |
+| Sawed-Off \| Lunar Wyrm (FT) × 8 | 0,25 € | 0,38 € | 0,38 € | −34 % | 105 à 146 |
+
+Plus d'un millier de ventes sont passées pendant ce temps sans en toucher
+aucun. Un vendeur pressé sert **l'ordre le plus haut**, et la file au-dessus
+de ces prix les absorbe tous.
+
+Ce qui rend le résultat lisible : ces prix d'ordre valent à peu près le prix
+**CSFloat** du même objet (0,20 $ et 0,29 $ le même jour). Un ordre à −30 %
+revient à demander à un vendeur Steam de céder au prix d'un marché retirable,
+alors que l'argent Steam vaut moins — rien ne l'y pousse. Sur un objet liquide,
+un ordre n'est servi que **quelques centimes sous la plus basse annonce** : il
+épargne la surveillance, pas de la marge. `max_discount` doit donc descendre
+nettement, et le prix du meilleur ordre (`highest_buy_order`) devenir la
+référence — il n'est lisible qu'à la main tant que les `item_nameid` manquent.
+
 Les frais Steam ont un **plancher de 0,01 par frais**, donc ils écrasent les
 petits montants à la vente : 66 % sur un objet à 0,03 €, 28,6 % à 0,07 €, contre
 12–13 % au-delà de 0,25 €. À l'achat, le prix affiché est ce qu'on paie.
@@ -467,6 +489,36 @@ irrécupérable à un panier déjà acheté : un panier d'entrées se compare à
 **revente de ses entrées**, jamais au prix payé. Les dix entrées Arabesque
 payées 4,84 € en revalaient 4,89 € — le contrat ne se jugeait donc pas sur
 +1,33 € de profit annoncé mais sur 6,17 € contre 4,89 €.
+
+**Si l'on vise le retirable, la sortie se revend sur CSFloat, jamais par le
+détour Steam.** Le même contrat Arabesque, mené à terme le 13 octobre 2026 :
+l'AUG | Lapis Lazuli (MW) sortie, valorisée **6,23 € nets sur Steam** par le
+plan, s'est vendue **5,28 € sur CSFloat** en moins d'une journée — soit
+≈ 5,17 € nets de 2 % de frais, pour **4,90 €** d'entrées réellement payées.
+
+| voie | retirable | contre 4,90 € engagés |
+|---|---|---|
+| revente Steam (6,23 €) puis sortie à 62 % | ≈ 3,86 € | −1,04 € |
+| **revente directe CSFloat (5,28 €)** | **≈ 5,17 €** | **+0,27 € (+5,6 %)** |
+
+Premier contrat du projet gagnant en argent retirable, et il ne l'est que par le
+choix du marché de revente : la voie Steam le rendait perdant. Le paragraphe
+« Revendre sur Steam rapporte plus » reste vrai **en monnaie Steam** ; dès qu'on
+compte en retirable, l'écart de 17 à 37 % qu'il mesure est plus que repris par
+les 38 % de la sortie.
+
+Deux autres mesures sur la même vente :
+- **décote de revente ≈ 8 %** sous la plus basse annonce CSFloat du palier
+  (6,67 $ la veille), contre 33 % sur le seul contrat mesuré jusque-là — une
+  vente unique, pas encore une moyenne, mais sous le seuil d'environ 18 % où le
+  gain s'annule ;
+- **deux semaines de cycle** (achats du 29/09 au 05/10, verrou, fusion,
+  vente), dont une semaine perdue en vendeurs défaillants et remplacements.
+  C'est le rythme, pas la marge, qui borne ce circuit.
+
+Ce qui manque au code : la ligne de commande `plan` revend déjà sur CSFloat
+(aucun `sell_source`), mais l'application web et le balayage valorisent la
+sortie sur Steam, donc dans la monnaie qu'on ne veut pas.
 
 **Le TTL se decide dans la SOURCE, pas dans le cache.** `QuoteCache`
 conserve tout ; a chaque lecture `SteamMarket`/`CSFloat` lui impose son propre
