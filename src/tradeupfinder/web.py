@@ -1572,6 +1572,9 @@ function ageTexte(ts) {
 }
 
 async function dernierBalayage() {
+  // Cette vue remplace la liste d'un balayage en cours : le sondage suivant
+  // doit la redessiner, pas la croire deja a l'ecran.
+  resultatsDessines = null;
   const r = $('#rarity').value;
   const d = await fetch('/api/latest?rarity=' + r).then(x => x.json());
   if (d.error) return;
@@ -1606,6 +1609,27 @@ async function dernierBalayage() {
 // --- La recherche -----------------------------------------------------------
 
 let sondageBatch = null, dernierBatch = null;
+// Le sondage d'un balayage tourne toutes les 5 s et redessinait la zone des
+// resultats a chaque fois : un plan ouvert par "Voir le plan" disparaissait,
+// et un detail deplie se refermait. `vuePlan` lui interdit d'y toucher tant
+// qu'un plan est affiche ; `resultatsDessines` evite de redessiner une liste
+// qui n'a pas change.
+let vuePlan = false, resultatsDessines = null;
+
+// Les <details> deplies de chaque plan, pour les rouvrir apres un redessin.
+function detailsOuverts() {
+  const ouverts = {};
+  document.querySelectorAll('#resultats [data-plan-id]').forEach(el => {
+    ouverts[el.dataset.planId] = [...el.querySelectorAll('details')].map(d => d.open);
+  });
+  return ouverts;
+}
+function restaurerDetails(ouverts) {
+  document.querySelectorAll('#resultats [data-plan-id]').forEach(el => {
+    const etats = ouverts[el.dataset.planId] || [];
+    el.querySelectorAll('details').forEach((d, i) => { if (etats[i]) d.open = true; });
+  });
+}
 
 // La vue d'un plan s'ouvre depuis la liste des contrats, dans un AUTRE onglet :
 // sans retour explicite, revenir a la liste demandait de retrouver l'onglet et
@@ -1641,6 +1665,8 @@ cette page ouverts : la recherche reprend toute seule si le quota s’épuise.`;
   if (!confirm(avert)) return;
 
   $('#chercher').disabled = true;
+  vuePlan = false;
+  resultatsDessines = null;
   $('#resultats').innerHTML = '';
   const r = await fetch('/api/batch', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1675,6 +1701,7 @@ async function dessinerBatch(b) {
   const fini = b.state === 'finished' || b.state === 'stopped';
   $('#stats-calcul').innerHTML = statsCalcul(b.results, fini ? null : b.progress);
   $('#nb-calcul').textContent = b.results.length || '';
+  if (vuePlan) return;
 
   $('#avancement').innerHTML = `<div class="card">
     <div class="row" style="justify-content:space-between;margin:0">
@@ -1688,6 +1715,10 @@ async function dessinerBatch(b) {
       ${Math.round(b.elapsed / 60)} min écoulées &middot; montants en
       ${b.currency}</p>
   </div>`;
+
+  const cle = b.results.map(x => x.plan_id).join(',') + (fini ? '|fini' : '');
+  if (cle === resultatsDessines) return;
+  resultatsDessines = cle;
 
   if (!b.results.length) {
     $('#resultats').innerHTML = fini
@@ -1703,8 +1734,13 @@ async function dessinerBatch(b) {
   // Les plans arrivent au fil de l'eau : on charge le detail de chacun avant
   // d'afficher, pour qu'une carte ne s'ouvre jamais sans sa liste d'achat.
   const plans = await Promise.all(b.results.map(x => chargerPlan(x.plan_id)));
+  // Un plan a pu etre ouvert pendant le chargement.
+  if (vuePlan) { resultatsDessines = null; return; }
+  const ouverts = detailsOuverts();
   $('#resultats').innerHTML = b.results
-    .map((x, i) => carte(plans[i], x.plan_id, false)).join('');
+    .map((x, i) => `<div data-plan-id="${x.plan_id}">` +
+      carte(plans[i], x.plan_id, false) + '</div>').join('');
+  restaurerDetails(ouverts);
 }
 
 document.addEventListener('click', async e => {
@@ -1944,6 +1980,7 @@ document.addEventListener('click', async e => {
     fermerModale();
     positionListe = window.scrollY;
     document.querySelector('.tab[data-pane="calcul"]').click();
+    vuePlan = true;
     $('#avancement').innerHTML = boutonRetour();
     $('#resultats').innerHTML = carte(r.plan, v.dataset.voir, true);
     // Le bouton est AU-DESSUS de la carte : viser la carte le cacherait.
@@ -1953,6 +1990,8 @@ document.addEventListener('click', async e => {
   if (e.target.closest('[data-retour]')) {
     // La vue d'un plan avait pris la place des resultats du jour : on les
     // remet, sans quoi l'onglet Calculer resterait fige sur ce plan.
+    vuePlan = false;
+    resultatsDessines = null;
     $('#avancement').innerHTML = '';
     $('#resultats').innerHTML = '';
     dernierBalayage();
