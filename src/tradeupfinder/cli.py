@@ -326,6 +326,26 @@ def cmd_collections(args) -> int:
     return 0
 
 
+def _devise_du_compte(source) -> tuple[str, float]:
+    """La devise du compte CSFloat et le prix d'un USD dans cette devise.
+
+    L'API cote en USD, le site facture dans la devise du profil : un plan
+    affiche en dollars ne correspond a aucun prix que l'utilisateur voit. Deux
+    requetes, qui ne cotent aucun objet. En cas d'echec on reste en USD -- et
+    on le dit, puisque l'etiquette changerait sinon de sens en silence.
+    """
+    try:
+        devise = source.account_currency()
+        if devise and devise != "USD":
+            return devise, source.usd_rate(devise)
+        if devise:
+            return "USD", 1.0
+    except Exception:  # noqa: BLE001 - la conversion est un confort
+        pass
+    print("Devise du compte illisible : montants affiches en USD.", file=sys.stderr)
+    return "USD", 1.0
+
+
 def cmd_plan(args) -> int:
     """Panier concret a partir des offres reellement en vente sur CSFloat."""
     key = csfloat_api_key(args.api_key)
@@ -359,24 +379,30 @@ def cmd_plan(args) -> int:
         return 0
 
     r = plan.result
+    devise, taux = _devise_du_compte(source)
+
+    def m(v: float) -> float:
+        """Un montant USD du plan, dans la devise du compte."""
+        return v * taux
+
     # La rarete sur stdout, et pas seulement dans l'en-tete stderr : c'est ce
     # qu'on relit dans un fichier de sortie ou un copier-coller.
     print(f"\n{col.name} [{plan.rarity.label} -> {plan.rarity.next_up.label}]"
           f" -- {plan.listings_examined} offres examinees")
-    print("Achat et revente sur CSFloat. Tous les montants sont en USD.\n")
+    print(f"Achat et revente sur CSFloat. Tous les montants sont en {devise}.\n")
     print("A ACHETER (offres reelles, floats exacts) :")
-    for ligne in plan.shopping_lines():
+    for ligne in plan.shopping_lines(taux):
         print(ligne)
     print(f"  {'-' * 70}")
-    print(f"  {'TOTAL':<46} {r.cost:>7.2f}  moyenne {r.avg_input_float:.4f}")
+    print(f"  {'TOTAL':<46} {m(r.cost):>7.2f}  moyenne {r.avg_input_float:.4f}")
 
     print("\nSORTIE :")
     for o in r.outcomes:
         print(f"  {o.name:<46} {o.probability:>6.1%}  float {o.float_value:.4f}"
-              f"  net {o.net_value:>7.2f}")
+              f"  net {m(o.net_value):>7.2f}")
 
-    print(f"\nCout {r.cost:.2f} | EV nette {r.ev_net:.2f} | "
-          f"profit {r.ev_profit:+.2f} ({r.roi:+.1%})")
+    print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
+          f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
     lent = plan.slowest_outcome
     if lent is not None:
         nom, st = lent
@@ -389,7 +415,7 @@ def cmd_plan(args) -> int:
             f"    {v} ventes par jour -- compte {delai} pour ecouler au bon prix."
         )
         if st.get("prix_median"):
-            print(f"    prix median reellement paye : {st['prix_median']:.2f}")
+            print(f"    prix median reellement paye : {m(st['prix_median']):.2f}")
         print(
             "  Accepter une offre rapide au lieu d'attendre coute environ un "
             "tiers de la valeur.\n"
@@ -399,14 +425,14 @@ def cmd_plan(args) -> int:
     if plan.all_outcomes_profitable:
         print(
             f"\nTOUTES LES SORTIES SONT RENTABLES : quel que soit le skin obtenu,\n"
-            f"  vous gagnez entre {plan.worst_profit:+.2f} (pire cas) et "
-            f"{plan.best_profit:+.2f} (meilleur cas).\n"
+            f"  vous gagnez entre {m(plan.worst_profit):+.2f} (pire cas) et "
+            f"{m(plan.best_profit):+.2f} (meilleur cas).\n"
             f"  Le tirage ne peut pas vous faire perdre."
         )
     elif plan.worst_profit is not None:
         print(
             f"\nLE TIRAGE PEUT VOUS FAIRE PERDRE : selon la sortie, "
-            f"de {plan.worst_profit:+.2f} a {plan.best_profit:+.2f}."
+            f"de {m(plan.worst_profit):+.2f} a {m(plan.best_profit):+.2f}."
         )
 
     if plan.exit_loss is not None and r.ev_profit > 0:
@@ -414,8 +440,8 @@ def cmd_plan(args) -> int:
             f"\nPORTE DE SORTIE : au bout des 7 jours les skins sont libres.\n"
             f"  Si le contrat n'est plus rentable, revends-les au lieu de les "
             f"fusionner.\n"
-            f"  Cela coute {plan.exit_loss:+.2f} ({plan.exit_loss_ratio:+.1%}), "
-            f"contre {r.ev_profit:+.2f} a gagner -- soit "
+            f"  Cela coute {m(plan.exit_loss):+.2f} ({plan.exit_loss_ratio:+.1%}), "
+            f"contre {m(r.ev_profit):+.2f} a gagner -- soit "
             f"{abs(r.ev_profit / plan.exit_loss):.1f}x plus a gagner qu'a perdre."
         )
 
@@ -438,8 +464,8 @@ def cmd_plan(args) -> int:
     print("  Si l'une part et que la remplacante depasse cette tolerance, la "
           "sortie perd un palier :")
     if plan.downgrade_profit is not None:
-        print(f"    reussite : {r.ev_profit:+.2f}   |   "
-              f"palier rate : {plan.downgrade_profit:+.2f}")
+        print(f"    reussite : {m(r.ev_profit):+.2f}   |   "
+              f"palier rate : {m(plan.downgrade_profit):+.2f}")
         if plan.downgrade_profit < 0 < r.ev_profit:
             ratio = abs(plan.downgrade_profit) / r.ev_profit
             print(f"    l'echec coute {ratio:.1f}x ce que la reussite rapporte")
@@ -456,7 +482,8 @@ def cmd_plan(args) -> int:
             # distinguait les fichiers deja ecrits.
             / f"plan-{col.id}-{args.rarity}-{datetime.now():%Y%m%d-%H%M}.html"
         )
-        ecrit = write_and_open(plan, chemin, open_browser=not args.no_open)
+        ecrit = write_and_open(plan, chemin, currency=devise, rate=taux,
+                               open_browser=not args.no_open)
         print(f"\nRapport : {ecrit}")
     return 0
 

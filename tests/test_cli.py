@@ -439,3 +439,23 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     # decide si un ordre peut etre place, pas celle du calcul.
     assert a["below_floor"] is False and b["below_floor"] is False
     assert b["order_price"] == pytest.approx(0.0351, abs=1e-4)
+
+
+# --- Devise de la commande plan ---------------------------------------------
+# L'API CSFloat cote en USD, le site facture dans la devise du profil : un plan
+# en dollars ne correspond a aucun prix que l'utilisateur voit.
+
+
+def test_plan_lit_la_devise_du_compte():
+    source = mock.Mock()
+    source.account_currency.return_value = "EUR"
+    source.usd_rate.return_value = 0.86
+    assert cli._devise_du_compte(source) == ("EUR", 0.86)
+
+
+def test_plan_reste_en_usd_si_la_devise_est_illisible(capsys):
+    source = mock.Mock()
+    source.account_currency.side_effect = RuntimeError("quota")
+    assert cli._devise_du_compte(source) == ("USD", 1.0)
+    # Le repli se dit : sans cela "USD" se lirait comme la devise du compte.
+    assert "illisible" in capsys.readouterr().err
