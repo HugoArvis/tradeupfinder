@@ -283,23 +283,25 @@ class Journal:
         ).fetchall()
         return {r["collection_id"]: r["dernier"] for r in rows}
 
-    def sweep_summary(self, rarity: str, *, max_age: float = 36 * 3600) -> dict:
-        """Ce que le dernier balayage a fait, rentable ou non.
+    def recent_plans(self, rarity: str, max_age: float) -> dict[str, tuple[str, dict]]:
+        """Le dernier plan de chaque collection calculee depuis `max_age` s.
 
-        "Aucun contrat rentable" et "aucun balayage" produisent le meme ecran
-        vide et appellent des reactions opposees : attendre dans un cas,
-        lancer un calcul dans l'autre. Les confondre a deja coute une
-        apres-midi sur ce projet.
+        Renvoie {collection_id: (plan_id, payload)}. Sert a un balayage de
+        sauter ce qui vient d'etre calcule SANS le faire disparaitre de ses
+        resultats : recalculer une collection vue il y a une heure ne coute que
+        du quota, et l'omettre de la liste ferait croire qu'elle a perdu.
         """
-        row = self._conn.execute(
-            """SELECT COUNT(DISTINCT collection_id) AS n, MAX(created_at) AS dernier
-               FROM plans WHERE rarity = ? AND created_at >= ?""",
+        rows = self._conn.execute(
+            """SELECT id, collection_id, payload FROM plans
+               WHERE rarity = ? AND created_at >= ?
+               ORDER BY created_at DESC""",
             (rarity, time.time() - max_age),
-        ).fetchone()
-        return {
-            "collections": row["n"] or 0,
-            "dernier": row["dernier"],
-        }
+        ).fetchall()
+        sortie: dict[str, tuple[str, dict]] = {}
+        for r in rows:
+            if r["collection_id"] not in sortie:
+                sortie[r["collection_id"]] = (r["id"], json.loads(r["payload"]))
+        return sortie
 
     def plan_payload(self, plan_id: str) -> dict | None:
         row = self._conn.execute(

@@ -24,7 +24,7 @@ from .models import TRADEABLE_INPUT_RARITIES, Rarity, Wear
 from .pricing.cache import QuoteCache
 from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
-from .plan import BudgetEpuise, build_plan
+from .plan import BudgetEpuise, build_plan, plan_payload
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .gold import GOLD_INPUT_COUNT, scan_crates
@@ -51,7 +51,6 @@ from .daily import (
     Ligne,
     Passage,
     age_max,
-    historique,
     journaliser,
     noms_prioritaires,
     recoter,
@@ -327,6 +326,26 @@ def cmd_collections(args) -> int:
     return 0
 
 
+def _devise_du_compte(source) -> tuple[str, float]:
+    """La devise du compte CSFloat et le prix d'un USD dans cette devise.
+
+    L'API cote en USD, le site facture dans la devise du profil : un plan
+    affiche en dollars ne correspond a aucun prix que l'utilisateur voit. Deux
+    requetes, qui ne cotent aucun objet. En cas d'echec on reste en USD -- et
+    on le dit, puisque l'etiquette changerait sinon de sens en silence.
+    """
+    try:
+        devise = source.account_currency()
+        if devise and devise != "USD":
+            return devise, source.usd_rate(devise)
+        if devise:
+            return "USD", 1.0
+    except Exception:  # noqa: BLE001 - la conversion est un confort
+        pass
+    print("Devise du compte illisible : montants affiches en USD.", file=sys.stderr)
+    return "USD", 1.0
+
+
 def cmd_plan(args) -> int:
     """Panier concret a partir des offres reellement en vente sur CSFloat."""
     key = csfloat_api_key(args.api_key)
@@ -360,24 +379,39 @@ def cmd_plan(args) -> int:
         return 0
 
     r = plan.result
+    devise, taux = _devise_du_compte(source)
+
+    def m(v: float) -> float:
+        """Un montant USD du plan, dans la devise du compte."""
+        return v * taux
+
     # La rarete sur stdout, et pas seulement dans l'en-tete stderr : c'est ce
     # qu'on relit dans un fichier de sortie ou un copier-coller.
     print(f"\n{col.name} [{plan.rarity.label} -> {plan.rarity.next_up.label}]"
           f" -- {plan.listings_examined} offres examinees")
-    print("Achat et revente sur CSFloat. Tous les montants sont en USD.\n")
+    print(f"Achat et revente sur CSFloat. Tous les montants sont en {devise}.\n")
     print("A ACHETER (offres reelles, floats exacts) :")
-    for ligne in plan.shopping_lines():
+    for ligne in plan.shopping_lines(taux):
         print(ligne)
     print(f"  {'-' * 70}")
-    print(f"  {'TOTAL':<46} {r.cost:>7.2f}  moyenne {r.avg_input_float:.4f}")
+    print(f"  {'TOTAL':<46} {m(r.cost):>7.2f}  moyenne {r.avg_input_float:.4f}")
 
     print("\nSORTIE :")
     for o in r.outcomes:
         print(f"  {o.name:<46} {o.probability:>6.1%}  float {o.float_value:.4f}"
-              f"  net {o.net_value:>7.2f}")
+              f"  net {m(o.net_value):>7.2f}")
 
-    print(f"\nCout {r.cost:.2f} | EV nette {r.ev_net:.2f} | "
-          f"profit {r.ev_profit:+.2f} ({r.roi:+.1%})")
+    print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
+          f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
+    if plan.next_baskets:
+        print(f"\nREPETER MAINTENANT : {len(plan.next_baskets)} panier(s) de plus "
+              f"avec les annonces restantes, meme contrainte de float.")
+        for n, panier in enumerate(plan.next_baskets, 2):
+            cout = sum(o.unit_cost for o in panier)
+            print(f"  panier n. {n} : {m(cout):7.2f}  profitabilite "
+                  f"{plan.basket_profitability(panier):.0%}")
+    else:
+        print("\nAucun autre panier rentable dans les annonces lues.")
     lent = plan.slowest_outcome
     if lent is not None:
         nom, st = lent
@@ -390,7 +424,7 @@ def cmd_plan(args) -> int:
             f"    {v} ventes par jour -- compte {delai} pour ecouler au bon prix."
         )
         if st.get("prix_median"):
-            print(f"    prix median reellement paye : {st['prix_median']:.2f}")
+            print(f"    prix median reellement paye : {m(st['prix_median']):.2f}")
         print(
             "  Accepter une offre rapide au lieu d'attendre coute environ un "
             "tiers de la valeur.\n"
@@ -400,14 +434,14 @@ def cmd_plan(args) -> int:
     if plan.all_outcomes_profitable:
         print(
             f"\nTOUTES LES SORTIES SONT RENTABLES : quel que soit le skin obtenu,\n"
-            f"  vous gagnez entre {plan.worst_profit:+.2f} (pire cas) et "
-            f"{plan.best_profit:+.2f} (meilleur cas).\n"
+            f"  vous gagnez entre {m(plan.worst_profit):+.2f} (pire cas) et "
+            f"{m(plan.best_profit):+.2f} (meilleur cas).\n"
             f"  Le tirage ne peut pas vous faire perdre."
         )
     elif plan.worst_profit is not None:
         print(
             f"\nLE TIRAGE PEUT VOUS FAIRE PERDRE : selon la sortie, "
-            f"de {plan.worst_profit:+.2f} a {plan.best_profit:+.2f}."
+            f"de {m(plan.worst_profit):+.2f} a {m(plan.best_profit):+.2f}."
         )
 
     if plan.exit_loss is not None and r.ev_profit > 0:
@@ -415,17 +449,17 @@ def cmd_plan(args) -> int:
             f"\nPORTE DE SORTIE : au bout des 7 jours les skins sont libres.\n"
             f"  Si le contrat n'est plus rentable, revends-les au lieu de les "
             f"fusionner.\n"
-            f"  Cela coute {plan.exit_loss:+.2f} ({plan.exit_loss_ratio:+.1%}), "
-            f"contre {r.ev_profit:+.2f} a gagner -- soit "
+            f"  Cela coute {m(plan.exit_loss):+.2f} ({plan.exit_loss_ratio:+.1%}), "
+            f"contre {m(r.ev_profit):+.2f} a gagner -- soit "
             f"{abs(r.ev_profit / plan.exit_loss):.1f}x plus a gagner qu'a perdre."
         )
 
     tolerance = plan.price_drop_tolerance
     if tolerance is not None:
         print(
-            f"\nBLOCAGE 7 JOURS : les entrees achetees aujourd'hui ne seront "
-            f"utilisables\n  dans un contrat que dans 7 jours. Vous revendrez "
-            f"donc une semaine plus tard."
+            "\nBLOCAGE 7 JOURS : les entrees achetees aujourd'hui ne seront "
+            "utilisables\n  dans un contrat que dans 7 jours. Vous revendrez "
+            "donc une semaine plus tard."
         )
         print(
             f"  Le prix de sortie peut baisser de {tolerance:.1%} d'ici la "
@@ -439,8 +473,8 @@ def cmd_plan(args) -> int:
     print("  Si l'une part et que la remplacante depasse cette tolerance, la "
           "sortie perd un palier :")
     if plan.downgrade_profit is not None:
-        print(f"    reussite : {r.ev_profit:+.2f}   |   "
-              f"palier rate : {plan.downgrade_profit:+.2f}")
+        print(f"    reussite : {m(r.ev_profit):+.2f}   |   "
+              f"palier rate : {m(plan.downgrade_profit):+.2f}")
         if plan.downgrade_profit < 0 < r.ev_profit:
             ratio = abs(plan.downgrade_profit) / r.ev_profit
             print(f"    l'echec coute {ratio:.1f}x ce que la reussite rapporte")
@@ -457,7 +491,8 @@ def cmd_plan(args) -> int:
             # distinguait les fichiers deja ecrits.
             / f"plan-{col.id}-{args.rarity}-{datetime.now():%Y%m%d-%H%M}.html"
         )
-        ecrit = write_and_open(plan, chemin, open_browser=not args.no_open)
+        ecrit = write_and_open(plan, chemin, currency=devise, rate=taux,
+                               open_browser=not args.no_open)
         print(f"\nRapport : {ecrit}")
     return 0
 
@@ -1037,7 +1072,6 @@ def cmd_daily(args) -> int:
     pricer, cache = _make_pricer(args)
     screen = ScreenConfig(min_ev_profit=-1e9, min_roi=-1.0,
                           min_profit_probability=0.0,
-                          min_outcome_volume=args.min_volume or None,
                           max_unpriced_probability=args.max_unpriced)
     avant, _ = scan(db, pricer, rarity, screen=screen, ranking=Ranking.ROI,
                     float_model=args.float_model,
@@ -1323,10 +1357,10 @@ def cmd_sweep(args) -> int:
               f"premier.", file=sys.stderr)
 
     print(f"{len(cols)} collections a calculer en {rarity.label}.", file=sys.stderr)
-    print(f"  ACHAT sur CSFloat, REVENTE estimee sur Steam. Les prix d'entree "
-          f"affiches sont ceux de CSFloat", file=sys.stderr)
-    print(f"  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
-          f"sans que l'un des deux soit faux.", file=sys.stderr)
+    print("  ACHAT sur CSFloat, REVENTE estimee sur Steam. Les prix d'entree "
+          "affiches sont ceux de CSFloat", file=sys.stderr)
+    print("  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
+          "sans que l'un des deux soit faux.", file=sys.stderr)
     file = list(cols)
     faits, echecs, rentables = 0, 0, 0
     debut = _t.time()
@@ -1429,73 +1463,10 @@ def cmd_sweep(args) -> int:
 def _plan_payload(plan, devise: str, taux: float = 1.0) -> dict:
     """Serialise un plan pour le journal, montants convertis dans `devise`.
 
-    Le calcul se fait en USD de bout en bout -- CSFloat y cote, et la revente
-    Steam y est ramenee par `sell_to_usd`. La conversion vers la devise du
-    compte n'a lieu QU'ICI, une seule fois : convertir en cours de route
-    multiplierait les occasions de melanger les deux.
+    Le contenu vit dans `plan.plan_payload` : il y avait deux serialiseurs, un
+    ici et un dans `web.py`, qui divergeaient champ par champ.
     """
-    r = plan.result
-
-    def c(v):
-        return round(v * taux, 4)
-
-    return {
-        "collection": plan.collection.name,
-        "rarity": plan.rarity.label,
-        "rarity_target": plan.rarity.next_up.label,
-        "currency": devise,
-        # Les entrees sont achetees sur CSFloat, la revente estimee sur Steam.
-        # Sans le dire, un utilisateur verifie les prix d'entree sur Steam et
-        # conclut a une erreur : mesure sur le M4A4 | Zubastick (WW), 0,07 EUR
-        # sur CSFloat contre 0,11 sur Steam. Les deux chiffres sont justes, ce
-        # sont deux marches.
-        "buy_market": "CSFloat",
-        "sell_market": "Steam",
-        # Le meme panier achete sur Steam : dit si le contrat ne tient QUE
-        # grace a l'ecart entre les deux marches.
-        "cost_alt": (c(plan.alt_cost) if plan.alt_cost is not None else None),
-        "profitability_alt": (round(plan.alt_profitability, 4)
-                              if plan.alt_profitability is not None else None),
-        # Le meme panier si trois annonces par objet sont prises avant nous :
-        # separe une occasion d'une course.
-        "cost_deep": (c(plan.deep_cost) if plan.deep_cost is not None else None),
-        "profitability_deep": (round(plan.deep_profitability, 4)
-                               if plan.deep_profitability is not None else None),
-        "fragile": plan.fragile,
-        # La voie ORDRE STEAM : repetable, float subi. Le rabais est ce qu'il
-        # faut obtenir sur le prix affiche pour tenir +20 % de rendement.
-        "float_subi_ok": plan.float_subi_compatible,
-        "order_budget": (c(plan.steam_order_budget())
-                         if plan.steam_order_budget() is not None else None),
-        "order_discount": (round(plan.steam_order_discount(), 4)
-                           if plan.steam_order_discount() is not None else None),
-        "cost": c(r.cost), "net": c(r.ev_net),
-        "profit": c(r.ev_profit), "roi": round(r.roi, 4),
-        "profitability": round(r.profitability, 4),
-        "win_probability": round(r.profit_probability, 4),
-        "outcomes_count": r.distinct_outcomes,
-        "stdev": c(r.stdev),
-        "avg_float": round(r.avg_input_float, 5),
-        "listings_examined": plan.listings_examined,
-        "float_slack": round(plan.float_slack, 5),
-        "worst_profit": (c(plan.worst_profit)
-                         if plan.worst_profit is not None else None),
-        "best_profit": (c(plan.best_profit)
-                        if plan.best_profit is not None else None),
-        "all_profitable": plan.all_outcomes_profitable,
-        "replis": plan.replis,
-        "downgrade_profit": (c(plan.downgrade_profit)
-                             if plan.downgrade_profit is not None else None),
-        "exit_loss": None, "exit_loss_ratio": None,
-        "price_drop_tolerance": None,
-        "inputs": [{"name": o.name, "float": round(o.float_value, 4),
-                    "price": c(o.unit_cost), "url": o.url}
-                   for o in sorted(plan.options,
-                                   key=lambda o: (o.skin.name, o.float_value))],
-        "outcomes": [{"name": o.name, "probability": round(o.probability, 4),
-                      "float": round(o.float_value, 4),
-                      "net": c(o.net_value)} for o in r.outcomes],
-    }
+    return plan_payload(plan, devise, lambda v: round(v * taux, 4))
 
 
 #: Seuil mesure le 28 septembre 2026 sur The Arabesque Collection : en dessous

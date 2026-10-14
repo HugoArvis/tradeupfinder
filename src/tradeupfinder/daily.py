@@ -87,14 +87,6 @@ class Ligne:
                 and self.confirmee >= 1.0
                 and self.frais)
 
-    @property
-    def ecart_confirmation(self) -> float | None:
-        """De combien `scan` s'est-il trompe ? Negatif = il etait optimiste."""
-        if self.confirmee is None:
-            return None
-        return self.confirmee - self.profitability
-
-
 @dataclass
 class Passage:
     """Ce qu'un passage quotidien a fait et trouve."""
@@ -260,24 +252,6 @@ def journaliser(passage: Passage, chemin: Path) -> None:
     }
     with chemin.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entree, ensure_ascii=False) + "\n")
-
-
-def historique(chemin: Path, collection: str, limite: int = 10) -> list[tuple[float, float]]:
-    """Serie (horodatage, profitabilite) d'une collection, du plus ancien au recent."""
-    if not chemin.exists():
-        return []
-    serie: list[tuple[float, float]] = []
-    for ligne in chemin.read_text(encoding="utf-8").splitlines():
-        if not ligne.strip():
-            continue
-        try:
-            d = json.loads(ligne)
-        except json.JSONDecodeError:
-            continue
-        for c in d.get("candidats", []):
-            if c.get("collection") == collection:
-                serie.append((d["horodatage"], c["profitabilite"]))
-    return serie[-limite:]
 
 
 #: Nombre de candidats confirmes par `plan` a chaque passage. Chacun coute

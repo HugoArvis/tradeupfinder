@@ -34,7 +34,8 @@ DEUX CONSEQUENCES A NE PAS OUBLIER
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .db import SkinDatabase
@@ -45,6 +46,17 @@ from .models import Collection, Rarity
 #: Prix minimal d'un objet sur le marche Steam. Un ordre en dessous est
 #: impossible a placer, quel que soit le calcul.
 STEAM_MIN_PRICE = 0.03
+
+
+def arrondi_bas_centime(montant: float) -> float:
+    """Arrondit vers le BAS au centime, sans perdre un centime au binaire.
+
+    `int(x * 100)` tronquait 0.58 * 0.5 * 100 = 28.999999999999996 en 28 : le
+    flottant porte la valeur exacte un epsilon en dessous, et l'ordre tombait
+    a 0.28 au lieu de 0.29. On ramene donc le produit a six decimales avant de
+    tronquer.
+    """
+    return math.floor(round(montant * 100, 6)) / 100
 
 #: Rabais au-dela duquel un ordre ne se remplit plus en pratique. Un ordre 20 %
 #: sous le prix demande finit par etre servi sur un objet liquide ; a 60 % on
@@ -191,8 +203,8 @@ class OrderPlan:
             )
         lignes.append("")
         lignes.append(
-            f"  Le float sera TIRE au hasard dans le palier : un ordre d'achat "
-            f"ne le choisit pas."
+            "  Le float sera TIRE au hasard dans le palier : un ordre d'achat "
+            "ne le choisit pas."
         )
         lignes.append(
             f"  Une fois les ordres servis : {self.win_probability:.0%} de "
@@ -245,7 +257,7 @@ def plan_orders(
             market_price=prix_unitaire,
             # Arrondi vers le BAS au centime : un ordre arrondi vers le haut
             # depasserait le budget et mangerait la marge visee.
-            order_price=int(prix_unitaire * facteur * 100) / 100,
+            order_price=arrondi_bas_centime(prix_unitaire * facteur),
         )
         for nom, qte, prix_unitaire, _ in resultat.shopping_list()
     ]

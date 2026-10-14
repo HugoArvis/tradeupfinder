@@ -15,7 +15,6 @@ condition.
 
 from __future__ import annotations
 
-import pytest
 
 from tradeupfinder.pricing.base import MIN_SALES_FOR_MEDIAN, Quote
 

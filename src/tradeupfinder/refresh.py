@@ -44,12 +44,6 @@ class Drift:
     role: str  # "entree" (on achete) ou "sortie" (on revend)
     ancien: float | None
     nouveau: float | None
-    age_ancien: float | None  # secondes ecoulees depuis l'ancien releve
-
-    @property
-    def inconnu(self) -> bool:
-        """Aucune reference anterieure : rien a comparer."""
-        return self.ancien is None
 
     @property
     def disparu(self) -> bool:
@@ -210,7 +204,6 @@ def refresh_quotes(
                 role=role,
                 ancien=_reference(ancien_q, role),
                 nouveau=_reference(nouveau_q, role),
-                age_ancien=ancien_q.age_seconds if ancien_q else None,
             )
         )
         if progress:

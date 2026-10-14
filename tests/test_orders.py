@@ -221,7 +221,6 @@ def test_lage_des_cotations_est_mesurable(tmp_path):
     import time
 
     from tradeupfinder.pricing.base import Quote
-    from tradeupfinder.pricing.cache import QuoteCache
     from tradeupfinder.pricing.repository import MarketPricer
 
     maintenant = time.time()

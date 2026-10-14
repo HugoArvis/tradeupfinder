@@ -100,15 +100,6 @@ class PriceSource(ABC):
         """
         return self.fetch(market_hash_name, use_cache=False)
 
-    def fetch_many(self, names: list[str]) -> dict[str, Quote]:
-        """Version par lot ; surchargee quand l'API supporte le batch."""
-        out: dict[str, Quote] = {}
-        for n in names:
-            q = self.fetch(n)
-            if q is not None:
-                out[n] = q
-        return out
-
     def estimated_duration(self, n_names: int) -> float:
         """Duree approximative d'un lot de `n_names` requetes, en secondes.
 

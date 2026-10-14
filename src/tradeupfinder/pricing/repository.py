@@ -69,7 +69,6 @@ class MarketPricer:
             raise ValueError(f"price_basis inconnu : {price_basis}")
         self.price_basis = price_basis
         self._quotes: dict[tuple[str, str], Quote | None] = {}
-        self._volume_unknown: set[str] = set()
         self._illiquid_inputs: set[str] = set()
 
     # --- Protocole PriceLookup ---
@@ -88,11 +87,6 @@ class MarketPricer:
             if q.volume < self.min_volume:
                 # Illiquide : on refuse de compter dessus plutot que de surestimer.
                 return None
-        elif self.min_volume is not None:
-            # Volume inconnu (CSFloat ne publie pas de volume de ventes) : on ne
-            # peut ni confirmer ni infirmer la liquidite. On laisse passer, mais
-            # on le trace pour que l'appelant puisse le signaler.
-            self._volume_unknown.add(q.market_hash_name)
         return self.sell_fees.net_from_sale(listed) * (1.0 - self.safety_margin)
 
     def buy_cost(self, skin: Skin, wear: Wear, stattrak: bool = False) -> float | None:
@@ -161,10 +155,6 @@ class MarketPricer:
                 if q is not None:
                     found += 1
         return found
-
-    def volume_unknown(self) -> list[str]:
-        """Objets dont la liquidite n'a pas pu etre verifiee."""
-        return sorted(self._volume_unknown)
 
     def quote_age(self) -> tuple[float, float] | None:
         """Age median et maximal des cotations chargees, en secondes.

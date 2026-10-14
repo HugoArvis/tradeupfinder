@@ -1,6 +1,6 @@
 """Tests de la selection 0/1 et de la construction de panier reel.
 
-La difference avec `cheapest_selection` est subtile mais critique : une annonce
+La difference avec la selection de `scan` est subtile mais critique : une annonce
 CSFloat est un objet UNIQUE. Un selecteur qui autorise la repetition produirait
 un panier impossible a passer en caisse.
 """
@@ -13,7 +13,8 @@ import pytest
 
 from tradeupfinder.generator import (
     InputOption,
-    cheapest_selection,
+    Recipe,
+    _select_across_collections,
     cheapest_unique_selection,
     options_from_listings,
 )
@@ -41,8 +42,9 @@ def test_une_annonce_ne_peut_servir_quune_fois():
     """Le coeur du sujet : 3 annonces ne suffisent pas pour 10 entrees."""
     options = [opt(1.0, 0.01), opt(1.0, 0.01), opt(1.0, 0.01)]
 
-    # Le selecteur a repetition accepte : il croit a un stock infini.
-    assert cheapest_selection(options, 10, float_budget=1.0) is not None
+    # Le selecteur a repetition de `scan` accepte : il croit a un stock infini.
+    recette = Recipe(counts=(("c", 10),), rarity=Rarity.MIL_SPEC)
+    assert _select_across_collections(recette, {"c": options}, 1.0) is not None
     # Le selecteur unique refuse : il n'y a que 3 objets reels.
     assert cheapest_unique_selection(options, 10, float_budget=1.0) is None
 
@@ -607,3 +609,149 @@ def test_le_budget_coupe_aussi_la_valorisation_des_sorties():
     with pytest.raises(BudgetEpuise):
         p.sell_net(SKIN, Wear.FACTORY_NEW)
     assert marche.appels == 0, "aucune cotation apres l'echeance"
+
+
+# --- Le prix d'ordre OBJET PAR OBJET ------------------------------------------
+# Un budget total ne se place pas : on pose un ordre par objet, a un prix. Tant
+# que `_cout_ailleurs` sommait les prix Steam puis les jetait, la carte ne
+# pouvait donner qu'un budget global -- et les ordres devaient vivre dans un
+# onglet separe qui refaisait tout le calcul.
+
+
+class _PlanMinimal:
+    """Juste ce que `steam_order_lines` lit, sans construire un vrai plan."""
+
+    def __init__(self, ev_net, alt_cost, alt_prices, options):
+        self.result = type("R", (), {"ev_net": ev_net})()
+        self.alt_cost = alt_cost
+        self.alt_prices = alt_prices
+        self.options = options
+
+    steam_order_budget = None  # remplace ci-dessous par la vraie methode
+    steam_order_lines = None
+
+
+def _plan_minimal(ev_net, alt_cost, alt_prices, noms):
+    from tradeupfinder.plan import Plan
+
+    p = _PlanMinimal(ev_net, alt_cost, alt_prices,
+                     tuple(type("O", (), {"name": n})() for n in noms))
+    # On emprunte les vraies methodes : le test doit exercer le code livre,
+    # pas une copie.
+    p.steam_order_budget = Plan.steam_order_budget.__get__(p)
+    p.steam_order_lines = Plan.steam_order_lines.__get__(p)
+    return p
+
+
+def test_le_prix_dordre_se_deduit_du_prix_steam_de_chaque_objet():
+    """Le budget est reparti proportionnellement : le MEME rabais partout.
+
+    Repartir autrement supposerait de savoir sur quels objets les vendeurs
+    cedent le plus, ce qu'aucune donnee ici ne dit.
+    """
+    # EV 12, rendement visé +20 % -> budget 10. Panier Steam a 20 -> facteur 0.5.
+    plan = _plan_minimal(12.0, 20.0, {"A": 2.0, "B": 1.0}, ["A"] * 9 + ["B"])
+    lignes = {l["name"]: l for l in plan.steam_order_lines()}
+
+    assert lignes["A"]["quantity"] == 9 and lignes["B"]["quantity"] == 1
+    assert lignes["A"]["order_price"] == pytest.approx(1.0)
+    assert lignes["B"]["order_price"] == pytest.approx(0.5)
+    # Le total des ordres ne DEPASSE pas le budget -- c'est tout l'objet de
+    # l'arrondi vers le bas.
+    total = sum(l["quantity"] * l["order_price"] for l in lignes.values())
+    assert total <= plan.steam_order_budget() + 1e-9
+
+
+def test_le_prix_dordre_sarrondit_vers_le_BAS():
+    """Arrondir vers le haut depasserait le budget et mangerait la marge."""
+    # facteur = 10/20 = 0.5 ; 0.07 * 0.5 = 0.035 -> 0.03, pas 0.04.
+    plan = _plan_minimal(12.0, 20.0, {"A": 0.07}, ["A"] * 10)
+    assert plan.steam_order_lines()[0]["order_price"] == pytest.approx(0.03)
+
+
+def test_larrondi_vers_le_bas_ne_perd_pas_un_centime_au_binaire():
+    """0.58 * 0.5 vaut 0.29, mais 28.999999999999996 une fois multiplie par
+    100 : `int()` tronquait a 0.28. Releve par la relecture de la PR #4."""
+    plan = _plan_minimal(12.0, 20.0, {"A": 0.58}, ["A"] * 10)
+    assert plan.steam_order_lines()[0]["order_price"] == 0.29
+
+
+def test_un_ordre_sous_le_plancher_steam_est_signale():
+    """Un ordre sous 0.03 ne sera jamais servi : aucun rabais ne le sauve."""
+    plan = _plan_minimal(12.0, 20.0, {"A": 0.03}, ["A"] * 10)
+    assert plan.steam_order_lines()[0]["below_floor"] is True
+
+
+def test_sans_prix_steam_il_ny_a_pas_de_prix_dordre():
+    """Un detail incomplet vaut moins que pas de detail : on renvoie None
+    plutot que des ordres pour une partie du panier seulement."""
+    assert _plan_minimal(12.0, 20.0, None, ["A"] * 10).steam_order_lines() is None
+    assert _plan_minimal(12.0, None, {"A": 1.0}, ["A"] * 10).steam_order_lines() is None
+    # Un nom du panier absent des prix : meme conclusion.
+    plan = _plan_minimal(12.0, 20.0, {"A": 1.0}, ["A"] * 9 + ["B"])
+    assert plan.steam_order_lines() is None
+
+
+# --- Paniers suivants --------------------------------------------------------
+# Le panier n. 1 ne se refait pas -- ses annonces sont uniques -- mais le carnet
+# en contient souvent d'autres. Les paniers suivants disent combien de contrats
+# on peut lancer en parallele, sans une requete de plus.
+
+
+def _annonces(prix, flt=0.05):
+    return [InputOption(skin=SKIN, wear=Wear.FACTORY_NEW, unit_cost=p,
+                        float_value=flt, listing_id=f"L{i}-{p}-{flt}")
+            for i, p in enumerate(prix)]
+
+
+def _plan_paniers(toutes, ev, budget):
+    from tradeupfinder.plan import Plan
+
+    premier = tuple(cheapest_unique_selection(toutes, 10, budget))
+
+    class FauxResultat:
+        ev_net = ev
+        outcomes = ()
+
+    return Plan(result=FauxResultat(), options=premier, collection=None,
+                listings_examined=len(toutes), float_budget=budget)
+
+
+def test_les_paniers_suivants_reprennent_les_annonces_restantes():
+    from tradeupfinder.plan import _paniers_suivants
+
+    # 30 annonces de 1.00 a 1.29 : paniers a 10.45, 11.45, 12.45.
+    toutes = _annonces([1.0 + 0.01 * i for i in range(30)])
+    plan = _plan_paniers(toutes, ev=12.0, budget=0.6)
+    suivants = _paniers_suivants(toutes, plan)
+
+    # Le n. 2 tient (12 / 11.45), le n. 3 non (12 / 12.45) : arret.
+    assert len(suivants) == 1
+    assert sum(o.unit_cost for o in suivants[0]) == pytest.approx(11.45)
+    assert plan.basket_profitability(suivants[0]) == pytest.approx(1.048, abs=1e-3)
+    # Aucune annonce n'est achetee deux fois.
+    ids = [o.listing_id for o in plan.options + suivants[0]]
+    assert len(ids) == len(set(ids)) == 20
+
+
+def test_les_paniers_suivants_gardent_la_contrainte_de_float():
+    """Une annonce bon marche mais trop haute en float changerait les sorties
+    de palier : c'est un autre contrat, pas un panier de plus."""
+    from tradeupfinder.plan import _paniers_suivants
+
+    toutes = (_annonces([1.0] * 10)                 # le panier n. 1
+              + _annonces([0.5] * 10, flt=0.50)     # moins cheres, trop hautes
+              + _annonces([1.1] * 10))              # le vrai panier n. 2
+    plan = _plan_paniers(toutes, ev=20.0, budget=0.6)
+    (suivant,) = _paniers_suivants(toutes, plan)
+    assert all(o.float_value == 0.05 for o in suivant)
+    assert sum(o.unit_cost for o in suivant) == pytest.approx(11.0)
+
+
+def test_pas_de_paniers_suivants_sans_contrainte_de_float_connue():
+    from tradeupfinder.plan import Plan, _paniers_suivants
+
+    toutes = _annonces([1.0] * 30)
+    plan = Plan(result=None, options=tuple(toutes[:10]), collection=None,
+                listings_examined=30)
+    assert _paniers_suivants(toutes, plan) == ()

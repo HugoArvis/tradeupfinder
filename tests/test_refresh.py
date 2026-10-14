@@ -59,36 +59,36 @@ def ancien(cache, nom, prix, age_heures=12.0):
 
 
 def test_une_entree_qui_rencherit_est_defavorable():
-    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=12.0, age_ancien=3600)
+    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=12.0)
     assert d.variation == pytest.approx(0.20)  # le prix a monte
     assert d.impact == pytest.approx(-0.20)  # mais ca nous coute
     assert d.defavorable()
 
 
 def test_une_sortie_qui_baisse_est_defavorable():
-    d = Drift("x", "faux", "sortie", ancien=10.0, nouveau=8.0, age_ancien=3600)
+    d = Drift("x", "faux", "sortie", ancien=10.0, nouveau=8.0)
     assert d.variation == pytest.approx(-0.20)
     assert d.impact == pytest.approx(-0.20)
     assert d.defavorable()
 
 
 def test_une_entree_qui_baisse_est_favorable():
-    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=8.0, age_ancien=3600)
+    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=8.0)
     assert d.impact == pytest.approx(0.20)
     assert not d.defavorable()
 
 
 def test_un_objet_sans_cotation_est_bloquant():
     # Ce n'est pas une derive de 0 % : le panier n'est plus achetable tel quel.
-    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=None, age_ancien=3600)
+    d = Drift("x", "faux", "entree", ancien=10.0, nouveau=None)
     assert d.disparu
     assert d.defavorable()
     assert d.variation is None
 
 
 def test_un_objet_jamais_cote_nalerte_pas():
-    d = Drift("x", "faux", "sortie", ancien=None, nouveau=10.0, age_ancien=None)
-    assert d.inconnu and not d.disparu
+    d = Drift("x", "faux", "sortie", ancien=None, nouveau=10.0)
+    assert d.ancien is None and not d.disparu
     assert not d.defavorable()
 
 
@@ -101,7 +101,6 @@ def test_recotation_compare_au_dernier_releve(cache):
     rapport = refresh_quotes(source, ["A"], cache=cache)
     d = rapport.drifts[0]
     assert d.ancien == 10.0 and d.nouveau == 9.0
-    assert d.age_ancien > 0
 
 
 def test_la_recotation_ignore_le_ttl_du_cache(cache):
@@ -126,7 +125,7 @@ def test_les_doublons_ne_sont_cotes_quune_fois(cache):
 def test_sans_cache_il_ny_a_rien_a_comparer():
     source = FauxMarche({"A": 1.0})
     rapport = refresh_quotes(source, ["A"], cache=None)
-    assert rapport.drifts[0].inconnu
+    assert rapport.drifts[0].ancien is None
     assert not rapport.a_recalculer
 
 

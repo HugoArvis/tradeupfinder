@@ -10,13 +10,14 @@ Deux points sensibles, testes ici :
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 import pytest
 
 from tradeupfinder.db import SkinDatabase
 from tradeupfinder.pricing.http import RateLimited
-from tradeupfinder.web import App, Job
+from tradeupfinder.web import App
 
 RAW_DB = {
     "version": "test",
@@ -76,64 +77,167 @@ def test_rarete_sans_collection_exploitable(app):
     assert app.collections("classified") == []
 
 
-# --- Taches ------------------------------------------------------------------
+# --- Balayages : un echec doit donner un etat lisible -------------------------
+# La page interroge l'avancement toutes les 5 s. Quoi qu'il arrive a une
+# collection, elle doit obtenir une reponse exploitable, jamais un balayage
+# fige ni une collection perdue en silence.
 
 
-def test_le_quota_epuise_donne_un_etat_lisible(app, monkeypatch):
+def _balayer(app, monkeypatch, build_plan):
+    monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
+    monkeypatch.setattr(app, "load_currency", lambda: None)
+    monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
+    monkeypatch.setattr(app, "revente", lambda: None)
+    return app.start_batch("mil-spec")
+
+
+def _attendre(batch, *etats: str, timeout: float = 5.0) -> None:
+    debut = time.time()
+    while batch.state not in etats and time.time() - debut < timeout:
+        time.sleep(0.01)
+    assert batch.state in etats, f"balayage bloque en {batch.state}"
+
+
+def test_le_quota_epuise_met_le_balayage_en_pause(app, monkeypatch):
     def boom(*a, **kw):
         raise RateLimited("429")
 
-    monkeypatch.setattr("tradeupfinder.web.build_plan", boom)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, boom)
+    _attendre(batch, "paused")
+    try:
+        # La collection reste dans la file : le quota reviendra, et la perdre
+        # serait un trou silencieux dans le balayage.
+        assert batch.pending[0] == "col_a" and not batch.failed
+        payload = app.batch_payload(batch)
+        assert payload["state"] == "paused" and payload["resume_in"] > 0
+        assert "quota" in payload["message"].lower()
+    finally:
+        batch.state = "stopped"  # libere le thread, qui attendrait 10 min
 
-    assert job.state == "quota"
-    assert "attendez" in job.message.lower()
-    payload = app.job_payload(job)
-    assert payload["state"] == "quota" and "plan" not in payload
 
+def test_une_erreur_inattendue_ne_bloque_pas_le_balayage(app, monkeypatch):
+    def casse(*a, **kw):
+        raise ValueError("casse")
 
-def test_une_erreur_inattendue_ne_bloque_pas_l_interface(app, monkeypatch):
-    monkeypatch.setattr(
-        "tradeupfinder.web.build_plan",
-        lambda *a, **kw: (_ for _ in ()).throw(ValueError("casse")),
-    )
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, casse)
+    _attendre(batch, "finished")
 
-    assert job.state == "error"
-    assert "ValueError" in job.message
-    assert app.job_payload(job)["state"] == "error"
+    # Chaque collection est signalee, et la seconde a quand meme ete tentee.
+    assert [f["error"] for f in batch.failed] == ["casse", "casse"]
+    assert app.batch_payload(batch)["state"] == "finished"
 
 
 def test_absence_d_annonces_est_distinguee_d_une_erreur(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(batch, "finished")
 
-    assert job.state == "empty"
-    assert "annonces" in job.message.lower()
+    assert batch.failed and all("annonces" in f["error"] for f in batch.failed)
 
 
-def test_deux_taches_coexistent(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    a = app.start_plan("col_a", "mil-spec")
-    b = app.start_plan("col_b", "mil-spec")
-    assert a.id != b.id
-    _attendre(a)
-    _attendre(b)
-    assert set(app.jobs) == {a.id, b.id}
+# --- Un seul balayage a la fois ----------------------------------------------
+# Une page rechargee ne voyait plus le balayage en cours et laissait en lancer
+# un second : deux instances CSFloat, le double du debit, le quota epuise pour
+# une heure.
+
+
+def test_un_second_lancement_rend_le_balayage_en_cours(app, monkeypatch):
+    libere = threading.Event()
+    # Bloque le calcul, donc garde le balayage en cours ; None ensuite, comme
+    # une collection sans annonce.
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: libere.wait(5) and None)
+    try:
+        assert app.running_batch() is batch
+        # Meme une autre rarete : c'est le quota qui est partage, pas la rarete.
+        assert app.start_batch("restricted") is batch
+        assert len(app.batches) == 1
+    finally:
+        batch.state = "stopped"
+        libere.set()
+
+
+def test_un_balayage_fini_laisse_lancer_le_suivant(app, monkeypatch):
+    premier = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(premier, "finished")
+
+    assert app.running_batch() is None
+    second = app.start_batch("mil-spec")
+    assert second is not premier
+    # Laisser son thread finir avant que monkeypatch ne restaure les vrais
+    # appels reseau sous ses pieds.
+    _attendre(second, "finished")
+
+
+# --- Reprise d'un balayage --------------------------------------------------
+# Un balayage lance depuis la page repartait de la premiere collection apres un
+# redemarrage du serveur, et refaisait ce qui venait d'etre calcule.
+
+
+def _plan_journal(collection):
+    return {"collection": collection, "cost": 1.0, "net": 1.5, "profit": 0.5,
+            "roi": 0.5, "profitability": 1.5, "avg_float": 0.1, "outcomes": [{}]}
+
+
+def _app_journal(tmp_path, monkeypatch, appels):
+    from tradeupfinder.journal import Journal
+
+    j = Journal(tmp_path / "j.db")
+    app = App(SkinDatabase.from_dict(RAW_DB), "cle", journal=j)
+
+    def build_plan(db, col, *a, **kw):
+        appels.append(col.id)
+        return None
+
+    monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
+    monkeypatch.setattr(app, "load_currency", lambda: None)
+    monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
+    monkeypatch.setattr(app, "revente", lambda: None)
+    return app, j
+
+
+def test_une_collection_recente_est_reprise_sans_recalcul(tmp_path, monkeypatch):
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    pid = j.save_plan(_plan_journal("Collection A"), collection_id="col_a",
+                      rarity="mil-spec")
+
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+
+    assert appels == ["col_b"]  # col_a n'est pas recotee
+    assert batch.reused == 1 and batch.total == 2
+    # ... mais son plan reste dans les resultats, comme s'il venait d'etre fait.
+    assert [d["plan_id"] for d in app.batch_payload(batch)["results"]] == [pid]
+    j.close()
+
+
+def test_le_balayage_commence_par_le_jamais_calcule_puis_le_plus_ancien(
+        tmp_path, monkeypatch):
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    # col_a calculee il y a deux jours : perimee, donc recalculee -- mais
+    # APRES col_b, jamais calculee.
+    j.save_plan(_plan_journal("Collection A"), collection_id="col_a",
+                rarity="mil-spec")
+    j._conn.execute("UPDATE plans SET created_at = ?", (time.time() - 2 * 86400,))
+    j._conn.commit()
+
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+
+    assert appels == ["col_b", "col_a"]
+    assert batch.reused == 0
+    j.close()
 
 
 # --- Fuite de secret ---------------------------------------------------------
 
 
 def test_la_cle_api_ne_sort_jamais(app, monkeypatch):
-    monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **kw: None)
-    job = app.start_plan("col_a", "mil-spec")
-    _attendre(job)
+    batch = _balayer(app, monkeypatch, lambda *a, **kw: None)
+    _attendre(batch, "finished")
 
-    tout = json.dumps(app.job_payload(job)) + json.dumps(app.collections("mil-spec"))
+    tout = (json.dumps(app.batch_payload(batch))
+            + json.dumps(app.collections("mil-spec")))
     assert "cle-secrete" not in tout
     # Meme partiellement : pas de fragment exploitable.
     assert "secrete" not in tout
@@ -144,13 +248,6 @@ def test_la_page_ne_contient_aucun_secret():
 
     assert "CSFLOAT_API_KEY" not in PAGE
     assert "Authorization" not in PAGE
-
-
-def _attendre(job: Job, timeout: float = 5.0) -> None:
-    debut = time.time()
-    while job.state == "running" and time.time() - debut < timeout:
-        time.sleep(0.01)
-    assert job.state != "running", "la tache n'a pas abouti"
 
 
 # --- Contrats exposes par l'API ----------------------------------------------
@@ -524,3 +621,54 @@ def test_un_plan_non_cote_ne_fait_pas_sauter_la_collection_suivante(app, monkeyp
 
     # Les DEUX collections doivent avoir ete tentees, pas une seule.
     assert len(batch.failed) == 2, f"file mal depilee : {batch.failed}"
+
+
+# --- Structure de la page ------------------------------------------------------
+# Un onglet dont le panneau manque n'est pas une erreur JavaScript : le clic
+# fonctionne, tous les panneaux se ferment, et l'ecran reste vide. Rien ne le
+# signale. L'inverse -- un panneau sans onglet -- est du code mort inatteignable.
+
+
+def test_chaque_onglet_a_son_panneau_et_reciproquement():
+    import re
+
+    from tradeupfinder.web import PAGE
+
+    onglets = set(re.findall(r'data-pane="(\w+)"', PAGE))
+    panneaux = set(re.findall(r'id="pane-(\w+)"', PAGE))
+    assert onglets == panneaux, (
+        f"onglets sans panneau : {sorted(onglets - panneaux)} ; "
+        f"panneaux sans onglet : {sorted(panneaux - onglets)}"
+    )
+
+
+def test_les_ordres_dachat_vivent_dans_la_carte_pas_dans_un_onglet():
+    """Un panier d'annonces ne se repete pas, un ordre d'achat si : les deux
+    voies doivent donc se lire au meme endroit, sur le contrat. L'onglet separe
+    refaisait tout le calcul et obligeait a comparer de tete."""
+    from tradeupfinder.web import PAGE
+
+    assert "pane-ordres" not in PAGE
+    assert "/api/orders" not in PAGE
+    # Le rendu des ordres est bien dans la carte.
+    assert "function detailOrdres(" in PAGE
+    # Et il n'y a plus qu'UN tableau de prix, non deux qui se recouvrent.
+    assert "function voies(" in PAGE
+    assert "function comparatif(" not in PAGE and "function deuxVoies(" not in PAGE
+
+
+def test_une_grille_suivie_de_contenu_garde_un_espace_en_dessous():
+    """Les cartes d'une grille perdent leur marge -- c'est la gouttiere qui les
+    espace. Mais la gouttiere n'espace pas la grille de ce qui la SUIT : sans
+    marge propre, le dernier contrat suivi colle au bloc d'historique. Rien
+    d'autre ne detecte ce genre de defaut, il ne se voit qu'a l'ecran.
+    """
+    import re
+
+    from tradeupfinder.web import PAGE
+
+    css = re.search(r"<style>(.*?)</style>", PAGE, re.S).group(1)
+    assert re.search(r"\.grille>\.card\{[^}]*margin-bottom:0", css), \
+        "les cartes d'une grille devraient perdre leur marge"
+    assert re.search(r"\.grille[^{]*\{[^}]*margin-bottom:\s*(?!0)", css), \
+        "la grille elle-meme doit garder un espace sous elle"

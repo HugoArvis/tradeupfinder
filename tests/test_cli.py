@@ -386,13 +386,33 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
         deep_cost = 11.0           # et plus cher encore sans arriver premier
         deep_profitability = 12.0 / 11.0
         fragile = False
+        # Un panier suivant de dix options a 1 USD : 10 USD.
+        next_baskets = (tuple(FauxOption() for _ in range(10)),)
         float_subi_compatible = True
+
+        def basket_profitability(self, panier):
+            return 12.0 / 11.0
+
+        # Champs que le serialiseur unifie lit aussi ; l'ancien `_plan_payload`
+        # les forcait a None de son cote.
+        exit_loss = None
+        exit_loss_ratio = None
+        price_drop_tolerance = None
 
         def steam_order_budget(self, target_roi=0.20):
             return 12.0 / 1.2
 
         def steam_order_discount(self, target_roi=0.20):
             return 1.0 - (12.0 / 1.2) / 14.0
+
+        def steam_order_lines(self, target_roi=0.20):
+            # 0.04 USD tombe sous le plancher Steam apres conversion, 0.20 non.
+            return (
+                {"name": "A", "quantity": 9, "market_price": 1.0,
+                 "order_price": 0.20, "below_floor": False},
+                {"name": "B", "quantity": 1, "market_price": 0.05,
+                 "order_price": 0.04, "below_floor": False},
+            )
 
     d = cli._plan_payload(FauxPlan(), "EUR", 0.8779)
 
@@ -410,7 +430,42 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     assert d["cost_deep"] == pytest.approx(9.6569)
     assert d["profitability_deep"] == pytest.approx(1.0909, abs=1e-4)
     assert d["fragile"] is False
+    # Les paniers suivants : cout et prix convertis, profitabilite non.
+    (suivant,) = d["next_baskets"]
+    assert suivant["cost"] == pytest.approx(10.0 * 0.8779)
+    assert suivant["inputs"][0]["price"] == pytest.approx(0.8779)
+    assert suivant["profitability"] == pytest.approx(1.0909, abs=1e-4)
     # La voie ordre Steam : le budget se convertit, le rabais est un RAPPORT.
     assert d["float_subi_ok"] is True
     assert d["order_budget"] == pytest.approx(8.779)
     assert d["order_discount"] == pytest.approx(0.2857, abs=1e-4)
+    # Les prix d'ordre se convertissent comme les autres montants...
+    a, b = d["order_lines"]
+    assert a["order_price"] == pytest.approx(0.1756, abs=1e-4)
+    assert a["market_price"] == pytest.approx(0.8779, abs=1e-4)
+    assert a["quantity"] == 9
+    # ... et le PLANCHER de Steam se rejuge APRES conversion : 0.04 USD vaut
+    # 0.035 EUR, encore au-dessus de 0.03 ; c'est la devise du compte qui
+    # decide si un ordre peut etre place, pas celle du calcul.
+    assert a["below_floor"] is False and b["below_floor"] is False
+    assert b["order_price"] == pytest.approx(0.0351, abs=1e-4)
+
+
+# --- Devise de la commande plan ---------------------------------------------
+# L'API CSFloat cote en USD, le site facture dans la devise du profil : un plan
+# en dollars ne correspond a aucun prix que l'utilisateur voit.
+
+
+def test_plan_lit_la_devise_du_compte():
+    source = mock.Mock()
+    source.account_currency.return_value = "EUR"
+    source.usd_rate.return_value = 0.86
+    assert cli._devise_du_compte(source) == ("EUR", 0.86)
+
+
+def test_plan_reste_en_usd_si_la_devise_est_illisible(capsys):
+    source = mock.Mock()
+    source.account_currency.side_effect = RuntimeError("quota")
+    assert cli._devise_du_compte(source) == ("USD", 1.0)
+    # Le repli se dit : sans cela "USD" se lirait comme la devise du compte.
+    assert "illisible" in capsys.readouterr().err

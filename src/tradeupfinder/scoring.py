@@ -37,7 +37,6 @@ class ScreenConfig:
     min_profit_probability: float = 0.0
     max_coefficient_of_variation: float | None = None
     max_cost: float | None = None
-    min_outcome_volume: int | None = None
     max_unpriced_probability: float = 0.02  # au-dela, l'EV n'est pas fiable
     require_positive_worst_case_ratio: float | None = None  # ex. 0.5
     min_cliff_distance: float = 0.0  # marge exigee sous une frontiere d'usure

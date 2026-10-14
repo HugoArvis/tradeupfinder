@@ -78,12 +78,13 @@ th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--lin
 th { font-size: 12px; color: var(--muted); font-weight: 600; }
 td.num, th.num { text-align: right; }
 tfoot td { font-weight: 650; border-bottom: none; }
-a.buy {
+a.buy, button.buy {
   display: inline-block; padding: 4px 12px; border-radius: 6px;
   background: var(--accent); color: #fff; text-decoration: none; font-size: 13px;
-  font-weight: 600;
+  font-weight: 600; border: 0; cursor: pointer; font-family: inherit;
 }
-a.buy:hover { filter: brightness(1.1); }
+a.buy:hover, button.buy:hover { filter: brightness(1.1); }
+button.buy { margin-top: 12px; }
 .warn {
   background: var(--warn-bg); border-left: 3px solid var(--warn);
   padding: 12px 14px; border-radius: 0 8px 8px 0; margin-bottom: 12px;
@@ -108,6 +109,22 @@ _JS = """
   }
   tick();
   setInterval(tick, 30000);
+
+  // L'API CSFloat n'a pas de panier : chaque annonce s'ouvre dans un onglet,
+  // l'achat reste a confirmer sur chacune. Sans pop-up autorisees, le
+  // navigateur n'ouvre que la premiere -- on compte les refus pour le dire.
+  var bouton = document.getElementById('tout-ouvrir');
+  if (bouton) bouton.addEventListener('click', function () {
+    var bloques = 0;
+    bouton.dataset.onglets.split(' ').forEach(function (u) {
+      var w = window.open(u, '_blank');
+      if (w) w.opener = null; else bloques++;
+    });
+    var avis = document.getElementById('onglets-bloques');
+    avis.textContent = bloques + ' annonce(s) bloquee(s) par le navigateur : '
+      + 'autorisez les fenetres pop-up pour cette page, puis recliquez.';
+    avis.style.display = bloques ? 'block' : 'none';
+  });
 })();
 """
 
@@ -116,8 +133,13 @@ def _money(v: float) -> str:
     return f"{v:,.2f}".replace(",", " ")
 
 
-def render(plan: Plan, *, currency: str = "USD") -> str:
-    """Genere la page HTML complete d'un plan."""
+def render(plan: Plan, *, currency: str = "USD", rate: float = 1.0) -> str:
+    """Genere la page HTML complete d'un plan.
+
+    Le plan est calcule en USD, la devise de l'API CSFloat. `rate` (1 USD en
+    `currency`) convertit chaque montant affiche : changer seulement
+    l'etiquette annoncait des euros sur des montants restes en dollars.
+    """
     r = plan.result
     now = datetime.now()
     cls = "pos" if r.ev_profit >= 0 else "neg"
@@ -134,10 +156,19 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
             "<tr>"
             f"<td>{html.escape(opt.name)}</td>"
             f'<td class="num">{opt.float_value:.4f}</td>'
-            f'<td class="num">{_money(opt.unit_cost)}</td>'
+            f'<td class="num">{_money(opt.unit_cost * rate)}</td>'
             f"<td>{lien}</td>"
             "</tr>"
         )
+
+    urls = [opt.url for opt in plan.options if opt.url]
+    bouton_onglets = (
+        f'<button class="buy" id="tout-ouvrir" '
+        f'data-onglets="{html.escape(" ".join(urls))}">'
+        f"Ouvrir les {len(urls)} annonces</button>"
+        if len(urls) >= 2
+        else ""
+    )
 
     sorties = []
     for o in r.outcomes:
@@ -148,7 +179,7 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
             f"{html.escape(o.name)}</a></td>"
             f'<td class="num">{o.probability:.1%}</td>'
             f'<td class="num">{o.float_value:.4f}</td>'
-            f'<td class="num">{_money(o.net_value)}</td>'
+            f'<td class="num">{_money(o.net_value * rate)}</td>'
             "</tr>"
         )
 
@@ -172,8 +203,8 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
             f"{plan.float_slack:.4f}</b> sur la somme des dix entrees. Si une "
             f"annonce part et que la remplacante depasse cette marge, la sortie "
             f"perd un palier d'usure : <span class=\"neg\">"
-            f"{plan.downgrade_profit:+.2f}</span> au lieu de "
-            f'<span class="pos">{r.ev_profit:+.2f}</span>.</div>'
+            f"{plan.downgrade_profit * rate:+.2f}</span> au lieu de "
+            f'<span class="pos">{r.ev_profit * rate:+.2f}</span>.</div>'
         )
 
     return f"""<style>{_CSS}</style>
@@ -191,11 +222,11 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
 
   <div class="card kpis">
     <div class="kpi"><div class="lab">Cout des 10 entrees</div>
-      <div class="val">{_money(r.cost)}</div></div>
+      <div class="val">{_money(r.cost * rate)}</div></div>
     <div class="kpi"><div class="lab">Revente nette</div>
-      <div class="val">{_money(r.ev_net)}</div></div>
+      <div class="val">{_money(r.ev_net * rate)}</div></div>
     <div class="kpi"><div class="lab">Profit</div>
-      <div class="val {cls}">{r.ev_profit:+.2f}</div></div>
+      <div class="val {cls}">{r.ev_profit * rate:+.2f}</div></div>
     <div class="kpi"><div class="lab">Rendement</div>
       <div class="val {cls}">{r.roi:+.1%}</div></div>
   </div>
@@ -209,8 +240,10 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
         <th class="num">Prix</th><th></th></tr></thead>
       <tbody>{''.join(lignes)}</tbody>
       <tfoot><tr><td>Moyenne de float : {r.avg_input_float:.4f}</td>
-        <td class="num"></td><td class="num">{_money(r.cost)}</td><td></td></tr></tfoot>
+        <td class="num"></td><td class="num">{_money(r.cost * rate)}</td><td></td></tr></tfoot>
     </table></div>
+    {bouton_onglets}
+    <div class="warn" id="onglets-bloques" style="display:none"></div>
     <p class="muted">Achetez les dix le plus groupe possible : le compteur de
     7 jours demarre a la reception de chaque objet, c'est le dernier qui
     commande.</p>
@@ -230,12 +263,17 @@ def render(plan: Plan, *, currency: str = "USD") -> str:
 
 
 def write_and_open(
-    plan: Plan, path: Path | str, *, currency: str = "USD", open_browser: bool = True
+    plan: Plan,
+    path: Path | str,
+    *,
+    currency: str = "USD",
+    rate: float = 1.0,
+    open_browser: bool = True,
 ) -> Path:
     """Ecrit le rapport et l'ouvre dans le navigateur par defaut."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(render(plan, currency=currency), encoding="utf-8")
+    p.write_text(render(plan, currency=currency, rate=rate), encoding="utf-8")
     if open_browser:
         webbrowser.open(p.resolve().as_uri())
     return p
