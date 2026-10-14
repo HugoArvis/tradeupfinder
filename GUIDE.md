@@ -60,9 +60,18 @@ python -m tradeupfinder.web
 Votre navigateur s'ouvre sur l'onglet **Calculer**, qui montre les contrats
 rentables trouvés par le dernier balayage pour la rareté choisie. Rien n'est
 recalculé à l'ouverture : un balayage complet dure plus d'une heure, il se fait
-la nuit (`python -m tradeupfinder.cli schedule` le planifie sur cette machine,
-via `scripts\balayage_nuit.cmd`). Seuls les contrats au-dessus du point mort sont
-affichés — les autres sont perdants, il n'y a rien à en faire.
+en tâche planifiée (`python -m tradeupfinder.cli schedule --install`). Seuls les
+contrats au-dessus du point mort sont affichés — les autres sont perdants, il
+n'y a rien à en faire.
+
+- **Sous Windows**, la nuit, via `scripts\balayage_nuit.cmd`.
+- **Sous Linux** (portable qu'on ne laisse pas tourner la nuit), une fois par
+  jour à 10 h pendant 60 minutes, ou au démarrage si le portable était éteint
+  à cette heure-là. C'est une tâche `systemd` de votre compte, sans droits
+  administrateur. Chaque passage reprend là où le précédent s'est arrêté : les
+  88 collections Mil-Spec sont couvertes en un peu plus d'une semaine.
+  `schedule` sans option dit quand aura lieu le prochain passage et comment se
+  sont terminés les derniers ; `schedule --remove` la retire.
 
 En haut, un bandeau résume la situation : la profitabilité de chaque contrat
 (barre hachurée quand le tirage peut faire perdre), les chances de gagner du
@@ -139,11 +148,12 @@ et la page le retrouve. **Arrêter le serveur, en revanche, le coupe**
 (`Ctrl+C`, terminal fermé) : relancez le serveur, puis « Relancer
 maintenant », et la reprise s'applique.
 
-**Un seul balayage à la fois.** Deux en parallèle doubleraient le débit vers
-CSFloat et épuiseraient le quota pour environ une heure : si vous cliquez
-pendant qu'un balayage tourne, la page le dit et reprend son suivi. Cette
-protection ne voit pas un `sweep` lancé en ligne de commande — n'en lancez pas
-un en même temps.
+**Un seul balayage à la fois**, qu'il vienne de la page, de la tâche planifiée
+ou de `sweep` en ligne de commande. Deux en parallèle doubleraient le débit vers
+CSFloat et épuiseraient le quota pour environ une heure. Si vous cliquez pendant
+qu'un balayage de la page tourne, elle reprend son suivi ; si c'est la tâche
+planifiée qui tourne, elle vous le dit, et ses plans apparaissent en rechargeant
+la page.
 
 ### Trois onglets
 

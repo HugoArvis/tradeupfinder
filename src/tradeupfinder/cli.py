@@ -56,12 +56,18 @@ from .daily import (
     recoter,
 )
 from .schedule import (
+    HEURE_LINUX,
+    MINUTES_LINUX,
+    UNITE,
+    dossier_unites,
     equivalent_cron,
     lanceur,
     retire_ancienne,
     supporte,
+    supporte_systemd,
     survivantes,
     taches,
+    unites_systemd,
 )
 from .refresh import DEFAULT_DRIFT_THRESHOLD, collection_roles, refresh_quotes
 from .report import write_and_open
@@ -1197,6 +1203,70 @@ def _avertit_anciennes(noms: list[str]) -> bool:
     return True
 
 
+def _schedule_systemd(args) -> int:
+    """Linux : un minuteur systemd de l'utilisateur, sans droits administrateur.
+
+    Un seul passage par jour, borne en duree et rattrape au demarrage. Rien
+    n'est lance a l'installation : le premier passage a lieu a l'heure dite,
+    ou au demarrage suivant si elle est passee.
+    """
+    import subprocess
+
+    def systemctl(*mots: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["systemctl", "--user", *mots],
+                              capture_output=True, text=True)
+
+    dossier = dossier_unites()
+    minuteur = f"{UNITE}.timer"
+
+    if args.remove:
+        systemctl("disable", "--now", minuteur)
+        for nom in unites_systemd():
+            (dossier / nom).unlink(missing_ok=True)
+        systemctl("daemon-reload")
+        print(f"  {UNITE:<32} retire")
+        return 0
+
+    if args.install:
+        dossier.mkdir(parents=True, exist_ok=True)
+        for nom, contenu in unites_systemd().items():
+            (dossier / nom).write_text(contenu, encoding="utf-8")
+        script = Path(__file__).resolve().parents[2] / "scripts" / "balayage.sh"
+        script.chmod(script.stat().st_mode | 0o111)
+        r = systemctl("daemon-reload")
+        if r.returncode == 0:
+            r = systemctl("enable", "--now", minuteur)
+        if r.returncode != 0:
+            print(f"  {UNITE:<32} ECHEC : {(r.stderr or r.stdout).strip()}",
+                  file=sys.stderr)
+            return 1
+        print(f"  {UNITE:<32} installe : tous les jours a {HEURE_LINUX}, "
+              f"{MINUTES_LINUX} min, rattrape au demarrage")
+        print(f"  unites dans {dossier}")
+        print("  sortie dans data/balayage.log -- rien n'est lance maintenant.")
+        return 0
+
+    # Etat par defaut : dire ce qui est planifie, et ce qu'ont donne les
+    # derniers passages, sans rien modifier.
+    r = systemctl("list-timers", "--all", minuteur)
+    if minuteur not in (r.stdout or ""):
+        print("Aucun balayage planifie. Pour l'installer :")
+        print("  python -m tradeupfinder.cli schedule --install")
+        return 0
+    print((r.stdout or "").strip())
+    journal = Path(__file__).resolve().parents[2] / "data" / "balayage.log"
+    if journal.exists():
+        fins = [l for l in journal.read_text(encoding="utf-8",
+                                             errors="replace").splitlines()
+                if l.startswith("[") and "] code " in l]
+        if fins:
+            print()
+            print("Derniers passages :")
+            for l in fins[-3:]:
+                print(f"  {l}")
+    return 0
+
+
 def cmd_schedule(args) -> int:
     """Enregistre (ou retire) le passage quotidien aupres du systeme.
 
@@ -1220,6 +1290,9 @@ def cmd_schedule(args) -> int:
         if r.returncode != 0:
             return []
         return [l.strip() for l in (r.stdout or "").splitlines() if l.strip()]
+
+    if supporte_systemd():
+        return _schedule_systemd(args)
 
     if not supporte():
         print("Planificateur non pilote sur ce systeme. Lignes crontab "
@@ -1293,6 +1366,28 @@ def cmd_schedule(args) -> int:
 
 
 def cmd_sweep(args) -> int:
+    """Balaye une rarete -- sauf si un autre balayage tourne deja.
+
+    Le verrou est partage avec l'application : deux balayages en parallele
+    doubleraient le debit CSFloat et feraient sauter le quota pour une heure.
+    Code 3 si le verrou est pris, pour qu'un planificateur ne le compte pas
+    comme une reussite.
+    """
+    from .verrou import liberer, prendre
+
+    tenu = prendre("sweep")
+    if tenu is not None:
+        print(f"Un balayage tourne deja ({tenu.get('qui', '?')}, pid "
+              f"{tenu.get('pid', '?')}) : pas de second, ils doubleraient le "
+              f"debit CSFloat.", file=sys.stderr)
+        return 3
+    try:
+        return _balayer(args)
+    finally:
+        liberer()
+
+
+def _balayer(args) -> int:
     """Balaye TOUTE une rarete avec `plan` et enregistre chaque resultat.
 
     C'est le travail long -- plus d'une heure pour 46 collections -- et c'est

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -39,6 +40,7 @@ from .inventory import (
     from_csfloat_rows,
     summary as inventory_summary,
 )
+from . import verrou
 from .journal import Journal
 from .models import Rarity
 from .plan import CSFloatPricer, Plan, build_plan, plan_payload
@@ -138,6 +140,14 @@ RECALCUL_APRES = 6 * 3600
 #: monnaie Steam, et l'ecart entre les deux suffisait a rendre perdant un
 #: contrat gagnant (mesure sur l'Arabesque, octobre 2026).
 MARCHE_REVENTE = "CSFloat"
+
+
+class BalayageExterne(Exception):
+    """Un balayage lance hors de l'application (`sweep`) tient le verrou."""
+
+    def __init__(self, occupant: dict):
+        super().__init__(occupant.get("qui", "?"))
+        self.occupant = occupant
 
 
 def _ligne_resultat(plan_id: str, collection: str, rarity: str, payload: dict) -> dict:
@@ -432,6 +442,16 @@ class App:
             en_cours = self._balayage_en_cours()
             if en_cours is not None:
                 return en_cours
+            # Le verrou partage avec `sweep`, que cette application ne voit pas
+            # autrement : lance par le planificateur, il peut tourner a
+            # l'allumage du portable pendant qu'on ouvre la page.
+            tenu = verrou.prendre("application")
+            if tenu is not None and tenu.get("pid") == os.getpid():
+                # Reste d'un balayage de ce meme processus : il est a nous.
+                verrou.liberer()
+                tenu = verrou.prendre("application")
+            if tenu is not None:
+                raise BalayageExterne(tenu)
             batch = Batch(
                 id=uuid.uuid4().hex[:12],
                 rarity=rarity_name,
@@ -445,6 +465,12 @@ class App:
         return batch
 
     def _run_batch(self, batch: Batch) -> None:
+        try:
+            self._balayer(batch)
+        finally:
+            verrou.liberer()
+
+    def _balayer(self, batch: Batch) -> None:
         self.load_currency()
         source = CSFloat(self._api_key, calls_per_minute=self.rate)
 
@@ -746,7 +772,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "rarete inconnue"}, 400)
                 return
             avant = self.app.running_batch()
-            batch = self.app.start_batch(rarity)
+            try:
+                batch = self.app.start_batch(rarity)
+            except BalayageExterne as exc:
+                self._json({"error": (
+                    f"Un balayage tourne deja hors de l'application "
+                    f"({exc.occupant.get('qui', '?')}, pid "
+                    f"{exc.occupant.get('pid', '?')}) : un second doublerait "
+                    f"le debit CSFloat. Ses plans s'afficheront ici a mesure "
+                    f"qu'il les enregistre -- rechargez la page.")}, 409)
+                return
             self._json({
                 "batch": batch.id,
                 "total": batch.total,

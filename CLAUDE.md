@@ -628,6 +628,23 @@ réellement, `evaluate()` cotant les sorties une par une. Vérifié : 2 min
 demandées, 6 min tenues avec le contrôle en amont seul, **2 min** une fois
 l'échéance descendue dans le pricer.
 
+**Un seul balayage à la fois, tous lanceurs confondus** : `verrou.py` tient un
+fichier `data/balayage.lock` (PID et heure de prise), pris par `sweep` et par le
+balayage de l'application. Sans lui, l'application ne voyait pas un `sweep` —
+autre processus —, et la planification Linux rend le cas courant : le balayage
+démarre seul à l'allumage du portable, pendant qu'on ouvre la page. Un verrou
+dont le processus est mort, ou vieux de plus de 4 h, est abandonné. `sweep`
+sort en code **3** quand le verrou est pris ; le service `systemd` accepte 3 et
+10 comme réussites. Les tests redirigent le verrou vers un dossier temporaire
+(`tests/conftest.py`) : sinon ils prendraient le vrai.
+
+**Sous Linux, le balayage est un minuteur `systemd` de l'utilisateur**
+(`schedule --install`), pas un passage de nuit : un portable ne tourne pas la
+nuit. Une fois par jour, 60 minutes, `Persistent=true` pour rattraper au
+démarrage un passage manqué — l'équivalent de `StartWhenAvailable`. Dans les
+unités, un `$` littéral s'écrit `$$`, et les chemins sont entre guillemets : le
+dossier du projet contient un espace.
+
 `BudgetEpuise` est distincte d'un échec : la collection n'a pas raté, elle n'a
 pas fini. Elle reste donc dans la file et le passage suivant la reprend comme
 jamais calculée.
