@@ -406,6 +406,20 @@ class Plan:
     # differe pas : c'est la PROFONDEUR au float exige qui differe, et rien ne
     # l'affichait.
     deep_cost: float | None = None
+    # La contrainte de float du panier : somme maximale des floats normalises
+    # des 10 entrees pour que les sorties restent a leur palier. Les paniers
+    # suivants s'y tiennent, sans quoi ils changeraient de contrat.
+    float_budget: float | None = None
+    # Les paniers n. 2, 3... composes avec les annonces restantes. Une annonce
+    # est unique : le panier n. 1 ne se refait pas, mais le carnet en contient
+    # souvent d'autres. Les acheter le meme jour fait tomber tous les verrous
+    # de 7 jours ensemble -- plusieurs contrats pour un seul cycle.
+    next_baskets: tuple[tuple[InputOption, ...], ...] = ()
+
+    def basket_profitability(self, panier) -> float | None:
+        """Profitabilite d'un panier suivant : meme EV, autre cout."""
+        cout = sum(o.unit_cost for o in panier)
+        return self.result.ev_net / cout if cout else None
 
     @property
     def valorisation_de_repli(self) -> bool:
@@ -731,6 +745,7 @@ def build_plan(
                 collection=collection,
                 rarity=rarity,
                 listings_examined=examinees,
+                float_budget=budget,
                 replis=pricer.replis,
                 downgrade_net=_net_si_palier_rate(result, pricer),
                 exit_value=_valeur_de_revente(selection, pricer, sell_fee),
@@ -750,7 +765,50 @@ def build_plan(
             alt_prices=ailleurs[1] if ailleurs else None,
             deep_cost=_cout_en_profondeur(toutes, meilleur),
         )
+        meilleur = replace(meilleur, next_baskets=_paniers_suivants(toutes, meilleur))
     return meilleur
+
+
+#: Paniers au plus, le premier compris. Au-dela, l'information ne change aucune
+#: decision : dix contrats en parallele immobilisent deja dix paniers sous
+#: verrou pendant 7 jours.
+PANIERS_MAX = 10
+
+
+def _paniers_suivants(toutes, plan) -> tuple[tuple[InputOption, ...], ...]:
+    """Les paniers n. 2, 3... composes avec les annonces que le n. 1 laisse.
+
+    Aucun appel reseau : toutes les annonces lues sont deja en memoire, le
+    panier n. 1 n'en garde que dix. Chaque panier se tient a la MEME
+    contrainte de float, donc aux memes sorties et a la meme EV -- seul son
+    cout change -- puis retire ses annonces du lot. On s'arrete au premier
+    panier impossible ou sous le point mort : les suivants coutent plus cher.
+
+    L'EV reprise est celle du n. 1. Un panier suivant peut viser plus bas en
+    float et sortir mieux, jamais moins bien : l'erreur est du cote prudent.
+    """
+    if plan.float_budget is None:
+        return ()
+
+    def cle(o):
+        return o.listing_id or id(o)
+
+    prises = {cle(o) for o in plan.options}
+    restantes = [o for o in toutes if cle(o) not in prises]
+    paniers = []
+    while len(paniers) < PANIERS_MAX - 1:
+        selection = cheapest_unique_selection(
+            restantes, TRADEUP_INPUT_COUNT, plan.float_budget
+        )
+        if selection is None:
+            break
+        prof = plan.basket_profitability(selection)
+        if prof is None or prof < 1.0:
+            break
+        paniers.append(tuple(selection))
+        prises = {cle(o) for o in selection}
+        restantes = [o for o in restantes if cle(o) not in prises]
+    return tuple(paniers)
 
 
 #: Nombre d'annonces les moins cheres supposees prises avant nous, par objet.
@@ -981,6 +1039,23 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         "cost_deep": opt(plan.deep_cost),
         "profitability_deep": arrondi(plan.deep_profitability),
         "fragile": plan.fragile,
+        # Les paniers suivants, faisables tout de suite avec les annonces
+        # restantes : combien de contrats le carnet permet en parallele.
+        "next_baskets": [
+            {
+                "cost": c(sum(o.unit_cost for o in panier)),
+                "profitability": arrondi(plan.basket_profitability(panier)),
+                "avg_float": round(
+                    sum(o.float_value for o in panier) / len(panier), 5),
+                "inputs": [
+                    {"name": o.name, "float": round(o.float_value, 4),
+                     "price": c(o.unit_cost), "url": o.url}
+                    for o in sorted(panier,
+                                    key=lambda o: (o.skin.name, o.float_value))
+                ],
+            }
+            for panier in plan.next_baskets
+        ],
         # La voie ORDRE STEAM : repetable, float subi.
         "float_subi_ok": plan.float_subi_compatible,
         "order_budget": opt(plan.steam_order_budget()),

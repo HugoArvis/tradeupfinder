@@ -72,6 +72,9 @@ const __plan = {
   cost_alt: 8.14, profitability_alt: 0.76,
   cost_deep: 4.92, profitability_deep: 1.25, fragile: false,
   float_subi_ok: true, order_budget: 5.14, order_discount: 0.31,
+  next_baskets: [{ cost: 5.02, profitability: 1.23, avg_float: 0.131,
+    inputs: [{ name: 'Sawed-Off | Lunar Wyrm (Minimal Wear)', float: 0.1301,
+               price: 0.51, url: 'https://csfloat.com/item/2' }] }],
   order_lines: [
     { name: 'Sawed-Off | Lunar Wyrm (Minimal Wear)', quantity: 9,
       market_price: 0.79, order_price: 0.54, below_floor: false },
@@ -127,6 +130,11 @@ const __cas = [
                'abc', false)],
   // Un plan journalise AVANT l'ajout des prix d'ordre n'a pas le champ. Le
   // bloc doit disparaitre, pas lever ni afficher un tableau vide.
+  // Un plan journalise avant les paniers suivants n'a pas le champ.
+  ['carte, plan sans paniers suivants',
+   () => carte({ ...__plan, next_baskets: undefined }, 'abc', false)],
+  ['carte, aucun panier suivant',
+   () => carte({ ...__plan, next_baskets: [] }, 'abc', false)],
   ['carte, plan sans prix d ordre',
    () => carte({ ...__plan, order_lines: null }, 'abc', false)],
   // La voie Steam fermee ET aucun budget d'ordre : les deux branches de

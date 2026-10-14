@@ -386,7 +386,12 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
         deep_cost = 11.0           # et plus cher encore sans arriver premier
         deep_profitability = 12.0 / 11.0
         fragile = False
+        # Un panier suivant de dix options a 1 USD : 10 USD.
+        next_baskets = (tuple(FauxOption() for _ in range(10)),)
         float_subi_compatible = True
+
+        def basket_profitability(self, panier):
+            return 12.0 / 11.0
 
         # Champs que le serialiseur unifie lit aussi ; l'ancien `_plan_payload`
         # les forcait a None de son cote.
@@ -425,6 +430,11 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     assert d["cost_deep"] == pytest.approx(9.6569)
     assert d["profitability_deep"] == pytest.approx(1.0909, abs=1e-4)
     assert d["fragile"] is False
+    # Les paniers suivants : cout et prix convertis, profitabilite non.
+    (suivant,) = d["next_baskets"]
+    assert suivant["cost"] == pytest.approx(10.0 * 0.8779)
+    assert suivant["inputs"][0]["price"] == pytest.approx(0.8779)
+    assert suivant["profitability"] == pytest.approx(1.0909, abs=1e-4)
     # La voie ordre Steam : le budget se convertit, le rabais est un RAPPORT.
     assert d["float_subi_ok"] is True
     assert d["order_budget"] == pytest.approx(8.779)

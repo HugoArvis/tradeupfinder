@@ -690,3 +690,68 @@ def test_sans_prix_steam_il_ny_a_pas_de_prix_dordre():
     # Un nom du panier absent des prix : meme conclusion.
     plan = _plan_minimal(12.0, 20.0, {"A": 1.0}, ["A"] * 9 + ["B"])
     assert plan.steam_order_lines() is None
+
+
+# --- Paniers suivants --------------------------------------------------------
+# Le panier n. 1 ne se refait pas -- ses annonces sont uniques -- mais le carnet
+# en contient souvent d'autres. Les paniers suivants disent combien de contrats
+# on peut lancer en parallele, sans une requete de plus.
+
+
+def _annonces(prix, flt=0.05):
+    return [InputOption(skin=SKIN, wear=Wear.FACTORY_NEW, unit_cost=p,
+                        float_value=flt, listing_id=f"L{i}-{p}-{flt}")
+            for i, p in enumerate(prix)]
+
+
+def _plan_paniers(toutes, ev, budget):
+    from tradeupfinder.plan import Plan
+
+    premier = tuple(cheapest_unique_selection(toutes, 10, budget))
+
+    class FauxResultat:
+        ev_net = ev
+        outcomes = ()
+
+    return Plan(result=FauxResultat(), options=premier, collection=None,
+                listings_examined=len(toutes), float_budget=budget)
+
+
+def test_les_paniers_suivants_reprennent_les_annonces_restantes():
+    from tradeupfinder.plan import _paniers_suivants
+
+    # 30 annonces de 1.00 a 1.29 : paniers a 10.45, 11.45, 12.45.
+    toutes = _annonces([1.0 + 0.01 * i for i in range(30)])
+    plan = _plan_paniers(toutes, ev=12.0, budget=0.6)
+    suivants = _paniers_suivants(toutes, plan)
+
+    # Le n. 2 tient (12 / 11.45), le n. 3 non (12 / 12.45) : arret.
+    assert len(suivants) == 1
+    assert sum(o.unit_cost for o in suivants[0]) == pytest.approx(11.45)
+    assert plan.basket_profitability(suivants[0]) == pytest.approx(1.048, abs=1e-3)
+    # Aucune annonce n'est achetee deux fois.
+    ids = [o.listing_id for o in plan.options + suivants[0]]
+    assert len(ids) == len(set(ids)) == 20
+
+
+def test_les_paniers_suivants_gardent_la_contrainte_de_float():
+    """Une annonce bon marche mais trop haute en float changerait les sorties
+    de palier : c'est un autre contrat, pas un panier de plus."""
+    from tradeupfinder.plan import _paniers_suivants
+
+    toutes = (_annonces([1.0] * 10)                 # le panier n. 1
+              + _annonces([0.5] * 10, flt=0.50)     # moins cheres, trop hautes
+              + _annonces([1.1] * 10))              # le vrai panier n. 2
+    plan = _plan_paniers(toutes, ev=20.0, budget=0.6)
+    (suivant,) = _paniers_suivants(toutes, plan)
+    assert all(o.float_value == 0.05 for o in suivant)
+    assert sum(o.unit_cost for o in suivant) == pytest.approx(11.0)
+
+
+def test_pas_de_paniers_suivants_sans_contrainte_de_float_connue():
+    from tradeupfinder.plan import Plan, _paniers_suivants
+
+    toutes = _annonces([1.0] * 30)
+    plan = Plan(result=None, options=tuple(toutes[:10]), collection=None,
+                listings_examined=30)
+    assert _paniers_suivants(toutes, plan) == ()
