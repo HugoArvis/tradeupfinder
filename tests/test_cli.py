@@ -323,7 +323,10 @@ def test_aucun_nom_non_defini_dans_le_paquet():
     import sys
     from pathlib import Path
 
-    paquet = Path(__file__).resolve().parents[1] / "src" / "tradeup"
+    paquet = Path(__file__).resolve().parents[1] / "src" / "tradeupfinder"
+    # Un chemin perime (le paquet s'appelait `tradeup`) faisait analyser un
+    # dossier inexistant : le test passait sans rien verifier.
+    assert paquet.is_dir()
     r = subprocess.run([sys.executable, "-m", "pyflakes", str(paquet)],
                        capture_output=True, text=True)
     graves = [l for l in r.stdout.splitlines() if "undefined name" in l]
