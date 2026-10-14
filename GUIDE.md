@@ -92,10 +92,12 @@ sorties, coût un peu plus élevé à chaque panier. Achetés le même jour, leu
 verrous de 7 jours tombent ensemble — plusieurs contrats pour un seul cycle.
 Chacun a ses liens et son bouton d'ouverture.
 
-> **La carte estime la revente sur Steam**, en monnaie Steam. Si vous comptez
-> retirer l'argent, préférez le chiffre de `plan` en ligne de commande, qui
-> estime la revente sur CSFloat (voir plus bas) : c'est celui qui correspond à
-> ce que vous encaisserez.
+> **La carte estime la revente sur CSFloat**, là où vous revendrez pour
+> retirer l'argent : ses chiffres sont en argent retirable. Les voies Steam
+> (ordre d'achat, prix affiché) n'y figurent plus ; à leur place, la ligne
+> **« Ordre d'achat CSFloat »** donne le prix maximal par entrée au-delà
+> duquel le contrat ne rapporte plus. Les plans calculés avant ce changement,
+> estimés sur Steam, ne sont ni affichés ni repris par un balayage.
 
 `Ctrl+C` dans le terminal arrête le serveur.
 
@@ -117,11 +119,10 @@ Le coût en requêtes CSFloat est indiqué avant de lancer. Ordres de grandeur :
 | Mil-Spec | 88 | ~2 400 | ~4 h |
 | Toutes raretés | 315 | ~8 000 | ~15 h |
 
-Ces durées supposent que Steam répond. Quand il refuse (erreur 429), chaque
-collection perd environ 5 minutes en tentatives : mesuré en octobre 2026,
-**10 à 15 minutes par collection**, et jusqu'à 39 pour une grosse collection de
-caisse. Les sorties sont alors estimées sur CSFloat, ce que la carte signale
-par « estimation prudente ».
+Le balayage n'interroge plus Steam : la revente est estimée sur CSFloat. Avant
+ce changement, chaque refus de Steam (erreur 429) coûtait environ 5 minutes par
+collection — mesuré en octobre 2026, 10 à 15 minutes par collection au lieu
+de 7 à 8.
 
 **Le quota CSFloat vous arrêtera avant la fin.** C'est prévu : le balayage se
 met en pause, affiche « reprise dans N secondes », et repart tout seul. La
@@ -366,7 +367,6 @@ sortie la plus lente et son nombre de ventes quotidiennes.
 | Une seule annonce s'ouvre sur « Ouvrir les N annonces » | pop-up bloquées | les autoriser pour la page, puis recliquer |
 | « Un balayage … tourne déjà » | un balayage est en cours | rien à faire : la page reprend son suivi |
 | `Devise du compte illisible : montants affiches en USD` | quota CSFloat épuisé au démarrage | relancer plus tard pour avoir les euros |
-| Balayage très lent, « estimation prudente » partout | Steam refuse (429) | normal, il continue sur CSFloat ; ne pas le relancer |
 
 Le `429` est le plus courant si vous enchaînez les commandes. CSFloat limite sur
 une fenêtre longue : relancer immédiatement ne fait qu'aggraver. Attendez.

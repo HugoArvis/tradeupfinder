@@ -1316,8 +1316,14 @@ def cmd_sweep(args) -> int:
 
     journal = Journal()
     source = CSFloat(cle, calls_per_minute=args.rate)
-    steam = SteamMarket(currency=args.currency, cache=QuoteCache(ttl_seconds=6 * 3600),
-                        calls_per_minute=15, ttl_seconds=6 * 3600)
+    # Revente sur CSFloat par defaut : on y achete et on y revend pour retirer
+    # l'argent. Steam reste possible pour qui capitalise en monnaie Steam ;
+    # ne pas l'interroger supprime aussi ses minutes d'attente quand il refuse.
+    steam = (SteamMarket(currency=args.currency,
+                         cache=QuoteCache(ttl_seconds=6 * 3600),
+                         calls_per_minute=15, ttl_seconds=6 * 3600)
+             if args.sell_market == "steam" else None)
+    marche = "Steam" if steam is not None else "CSFloat"
 
     # CSFloat cote en USD, Steam dans la devise demandee. Sans conversion, le
     # cout est en dollars et la revente en euros : le rapport des deux n'est
@@ -1349,7 +1355,9 @@ def cmd_sweep(args) -> int:
     # puis les plus anciennes. Un balayage coupe par le quota ou par la limite
     # de duree repartirait sinon de la premiere et referait eternellement les
     # memes -- le meme piege que le TTL qui ne remontait pas jusqu'a la source.
-    vues = journal.last_swept(args.rarity)
+    # Seuls les plans estimes sur le meme marche de revente comptent comme
+    # deja calcules.
+    vues = journal.last_swept(args.rarity, sell_market=marche)
     cols.sort(key=lambda c: vues.get(c.id, 0.0))
     jamais = sum(1 for c in cols if c.id not in vues)
     if jamais:
@@ -1357,10 +1365,11 @@ def cmd_sweep(args) -> int:
               f"premier.", file=sys.stderr)
 
     print(f"{len(cols)} collections a calculer en {rarity.label}.", file=sys.stderr)
-    print("  ACHAT sur CSFloat, REVENTE estimee sur Steam. Les prix d'entree "
-          "affiches sont ceux de CSFloat", file=sys.stderr)
-    print("  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
-          "sans que l'un des deux soit faux.", file=sys.stderr)
+    print(f"  ACHAT sur CSFloat, REVENTE estimee sur {marche}. Les prix "
+          f"d'entree affiches sont ceux de CSFloat", file=sys.stderr)
+    if steam is not None:
+        print("  -- verifier une entree sur Steam donnera un chiffre plus eleve, "
+              "sans que l'un des deux soit faux.", file=sys.stderr)
     file = list(cols)
     faits, echecs, rentables = 0, 0, 0
     debut = _t.time()
@@ -1374,10 +1383,14 @@ def cmd_sweep(args) -> int:
             break
         col = file[0]
         try:
-            plan = build_plan(db, col, rarity, source, sell_source=steam,
-                              sell_fees=FEE_MODELS["steam"],
-                              sell_to_usd=1.0 / usd_vers_devise,
-                              deadline=debut + limite)
+            if steam is not None:
+                plan = build_plan(db, col, rarity, source, sell_source=steam,
+                                  sell_fees=FEE_MODELS["steam"],
+                                  sell_to_usd=1.0 / usd_vers_devise,
+                                  deadline=debut + limite)
+            else:
+                plan = build_plan(db, col, rarity, source,
+                                  deadline=debut + limite)
         except RateLimited:
             # On NE retire PAS la collection de la file : le quota reviendra.
             print(f"  quota epuise, pause de {args.pause // 60} min "
@@ -1843,6 +1856,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pause", type=int, default=600,
                    help="pause en secondes quand le quota est epuise (defaut 600)")
     s.add_argument("--currency", default="EUR", choices=sorted(CURRENCIES))
+    s.add_argument("--sell-market", default="csfloat", choices=("csfloat", "steam"),
+                   help="marche ou estimer la revente des sorties (defaut "
+                        "csfloat : on y revend pour retirer l'argent)")
     s.add_argument("--api-key", default=None)
     s.add_argument("--db", default=None)
 

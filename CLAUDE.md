@@ -84,7 +84,7 @@ Le raccourci `tradeupfinder` n'est pas dans le `PATH` : passer par `python -m tr
 
 | | `scan` | `plan` |
 |---|---|---|
-| Source | Steam ou CSFloat (`MarketPricer`) | achat CSFloat, revente Steam (`plan.CSFloatPricer`) |
+| Source | Steam ou CSFloat (`MarketPricer`) | achat et revente CSFloat par défaut (`plan.CSFloatPricer`) |
 | Prix | un par palier d'usure | annonces réelles |
 | Float | supposé (`--float-pct`) | exact |
 | Sélection | avec répétition | 0/1, une annonce est unique |
@@ -516,9 +516,15 @@ Deux autres mesures sur la même vente :
   vente), dont une semaine perdue en vendeurs défaillants et remplacements.
   C'est le rythme, pas la marge, qui borne ce circuit.
 
-Ce qui manque au code : la ligne de commande `plan` revend déjà sur CSFloat
-(aucun `sell_source`), mais l'application web et le balayage valorisent la
-sortie sur Steam, donc dans la monnaie qu'on ne veut pas.
+D'où le passage, en octobre 2026, de l'application et de `sweep` à la revente
+CSFloat (`plan` la faisait déjà : aucun `sell_source`). `Plan.sell_market` et
+le payload portent le marché de revente, et la reprise d'un balayage comme
+l'affichage du dernier ne retiennent que les plans de CSFloat
+(`Journal.*(sell_market=...)`). Un plan **sans** ce champ est de marché
+inconnu : il ne passe aucun filtre plutôt que d'être supposé. Steam reste
+possible (`sweep --sell-market steam`, `daily`) pour qui capitalise en monnaie
+Steam ; ne plus l'interroger supprime aussi ses 5 minutes d'attente par
+collection quand il refuse.
 
 **Le TTL se decide dans la SOURCE, pas dans le cache.** `QuoteCache`
 conserve tout ; a chaque lecture `SteamMarket`/`CSFloat` lui impose son propre

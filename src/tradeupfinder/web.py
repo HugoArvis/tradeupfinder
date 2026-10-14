@@ -41,12 +41,9 @@ from .inventory import (
 )
 from .journal import Journal
 from .models import Rarity
-from .fees import STEAM
 from .plan import CSFloatPricer, Plan, build_plan, plan_payload
-from .pricing.cache import QuoteCache
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
-from .pricing.steam import SteamMarket
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +133,12 @@ SEUIL_PROFITABLE = 1.0
 #: partir -- un plan est perissable.
 RECALCUL_APRES = 6 * 3600
 
+#: Marche ou l'application estime la revente des sorties. La strategie achete
+#: et revend sur CSFloat pour retirer l'argent : estimer sur Steam comptait en
+#: monnaie Steam, et l'ecart entre les deux suffisait a rendre perdant un
+#: contrat gagnant (mesure sur l'Arabesque, octobre 2026).
+MARCHE_REVENTE = "CSFloat"
+
 
 def _ligne_resultat(plan_id: str, collection: str, rarity: str, payload: dict) -> dict:
     """Une collection traitee, telle que la liste d'un balayage la montre.
@@ -176,19 +179,6 @@ class App:
         self._inventaire_lu: float = 0.0
         self.journal = journal or Journal()
         self._lock = threading.Lock()
-        # On achete sur CSFloat (annonces avec float exact, prix bruts plus
-        # bas) et on revend sur Steam (net superieur de 17 a 37 % malgre des
-        # frais six fois plus eleves, et dix fois plus de volume).
-        #
-        # Steam est interroge dans la devise du COMPTE, pas en USD, pour deux
-        # raisons : ses frais ont un plancher de 0,01 qui doit s'appliquer
-        # dans la devise ou l'on encaisse, et le cache de prix est indexe par
-        # devise -- coter en USD rendrait inutilisables toutes les cotations
-        # deja obtenues. Le net est converti en USD APRES les frais, pour
-        # rejoindre les couts CSFloat : additionner un cout en USD et un
-        # produit de vente en EUR donne un nombre qui ressemble a un profit
-        # sans en etre un.
-        self._revente: SteamMarket | None = None
         # L'API CSFloat cote en USD, mais le site affiche -- et facture -- dans
         # la devise du profil. Sans conversion, les montants ne correspondent a
         # rien de ce que l'utilisateur voit ni de ce qu'il paie.
@@ -219,23 +209,6 @@ class App:
                     self.currency = devise
         except Exception:  # noqa: BLE001 - la conversion est un confort
             log.warning("Devise du compte indisponible, affichage en USD")
-
-    def revente(self) -> SteamMarket:
-        """Marche de revente des sorties, partage par tous les calculs.
-
-        Une seule instance : deux auraient chacune leur limiteur de debit et
-        emettraient donc le double du rythme annonce, ce qui est exactement ce
-        qui fait fermer la porte cote Steam.
-        """
-        self.load_currency()
-        with self._lock:
-            if self._revente is None:
-                self._revente = SteamMarket(
-                    currency=self.currency,
-                    cache=QuoteCache(ttl_seconds=6 * 3600),
-                    calls_per_minute=15,
-                )
-            return self._revente
 
     @property
     def currency_known(self) -> bool:
@@ -443,8 +416,11 @@ class App:
         # Meme ordre que `sweep` : jamais calculees d'abord, puis les plus
         # anciennes. Sans lui, un balayage coupe -- serveur relance, quota --
         # repartait de la premiere collection et refaisait les memes.
-        vues = self.journal.last_swept(rarity_name)
-        recents = self.journal.recent_plans(rarity_name, RECALCUL_APRES)
+        # Seuls les plans estimes sur le meme marche de revente comptent : un
+        # plan revendu sur Steam n'est ni repris ni pris pour deja calcule.
+        vues = self.journal.last_swept(rarity_name, sell_market=MARCHE_REVENTE)
+        recents = self.journal.recent_plans(rarity_name, RECALCUL_APRES,
+                                            sell_market=MARCHE_REVENTE)
         a_faire = sorted((c for c in cols if c["id"] not in recents),
                          key=lambda c: vues.get(c["id"], 0.0))
         repris = []
@@ -483,9 +459,10 @@ class App:
             cid = batch.pending[0]
             col = self.db.collection(cid)
             try:
-                plan = build_plan(self.db, col, RARITES[batch.rarity], source,
-                                  sell_source=self.revente(), sell_fees=STEAM,
-                                  sell_to_usd=1.0 / self.rate_usd)
+                # Revente estimee sur CSFloat : on y achete et on y revend,
+                # pour retirer l'argent. Steam n'est plus interroge du tout,
+                # ce qui supprime aussi ses minutes d'attente quand il refuse.
+                plan = build_plan(self.db, col, RARITES[batch.rarity], source)
             except RateLimited:
                 # On NE retire PAS la collection de la file : le quota reviendra
                 # et elle sera retentee. Perdre une collection parce que l'API a
@@ -714,7 +691,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "rarete inconnue"}, 400)
                 return
             self._json({
-                "plans": self.app.journal.latest_profitable(rarity),
+                "plans": self.app.journal.latest_profitable(
+                    rarity, sell_market=MARCHE_REVENTE),
                 "currency": self.app.currency,
             })
         elif route.path == "/api/history":
@@ -1501,7 +1479,19 @@ function voies(p) {
            maintenant, détail ci-dessous`
         : 'aucun autre panier rentable dans les annonces lues'}</td></tr>`);
 
-  if (p.float_subi_ok === false) {
+  // Achat et revente sur le meme marche : les voies Steam (ordre, prix
+  // affiche) ne servent pas la strategie, et leurs prix ne sont plus cotes.
+  // Reste l'ordre CSFloat, dont le prix utile se deduit de l'EV seule.
+  if (revente === achat) {
+    const plafond = p.net / 10;
+    lignes.push(`<tr><td><b>Ordre d’achat ${achat}</b>, filtre de float</td>
+      <td class="num">${p.net.toFixed(2)}</td>
+      <td class="num">point mort</td>
+      <td class="muted libre">au plus <b>${plafond.toFixed(2)}</b> par entrée,
+        au-delà le contrat ne rapporte plus · filtre de float à régler pour
+        garder la sortie au même palier · répétable, délai de remplissage en
+        cours de mesure</td></tr>`);
+  } else if (p.float_subi_ok === false) {
     lignes.push(`<tr><td><b>Ordre d’achat ${revente}</b></td>
       <td class="num neg">impossible</td><td class="num">—</td>
       <td class="muted libre">le float est subi et les sorties changeraient de
@@ -1522,11 +1512,13 @@ function voies(p) {
         centimes sous la plus basse annonce</td></tr>`);
   }
 
-  if (p.cost_alt === null || p.cost_alt === undefined) {
+  // Le meme panier "au prix affiche" du marche de revente n'a de sens que si
+  // ce marche differe de celui d'achat.
+  if (revente !== achat && (p.cost_alt === null || p.cost_alt === undefined)) {
     lignes.push(`<tr><td>${revente} au prix affiché</td>
       <td class="num">—</td><td class="num">—</td>
       <td class="muted libre">un prix manquait</td></tr>`);
-  } else {
+  } else if (revente !== achat) {
     const ecart = (p.cost_alt - p.cost) / p.cost;
     const profAlt = p.profitability_alt || 0;
     const tient = profAlt >= SEUIL_PROFITABLE;
@@ -1554,7 +1546,8 @@ function detailAnnonces(p) {
   return `<details>
     <summary>Acheter maintenant sur ${achat} — les 10 annonces
       (${p.cost.toFixed(2)})</summary>
-    <p class="muted">Prix ${achat}, pas ${p.sell_market || 'Steam'}. Ces
+    <p class="muted">${(p.sell_market || 'Steam') === achat ? ''
+      : `Prix ${achat}, pas ${p.sell_market || 'Steam'}. `}Ces
     annonces sont <b>uniques et périssables</b> : n’en remplacez aucune par un
     exemplaire moins cher, le float de chacune décide de l’usure en sortie.
     Achetez les dix d’un coup — le verrou de 7 jours part à la réception de
