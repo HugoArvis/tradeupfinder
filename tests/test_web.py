@@ -226,6 +226,37 @@ def test_un_plan_estime_sur_steam_n_est_pas_repris(tmp_path, monkeypatch):
     j.close()
 
 
+def test_l_application_ne_lance_rien_pendant_un_sweep(tmp_path, monkeypatch,
+                                                    verrou_isole):
+    """`sweep` est un autre processus : seul le verrou le rend visible."""
+    import json as _json
+    import os as _os
+
+    from tradeupfinder.web import BalayageExterne
+
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    verrou_isole.write_text(_json.dumps(
+        {"pid": _os.getppid(), "qui": "sweep", "depuis": time.time()}))
+    with pytest.raises(BalayageExterne):
+        app.start_batch("mil-spec")
+    assert app.running_batch() is None and appels == []
+    j.close()
+
+
+def test_l_application_rend_le_verrou_en_finissant(tmp_path, monkeypatch,
+                                                   verrou_isole):
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+    debut = time.time()
+    while verrou_isole.exists() and time.time() - debut < 2:
+        time.sleep(0.01)
+    assert not verrou_isole.exists()
+    j.close()
+
+
 def test_le_balayage_commence_par_le_jamais_calcule_puis_le_plus_ancien(
         tmp_path, monkeypatch):
     appels: list[str] = []

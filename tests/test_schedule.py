@@ -163,3 +163,45 @@ def test_retirer_une_ancienne_tache_ne_demande_pas_confirmation():
     assert "Unregister-ScheduledTask" in commande
     assert "-Confirm:$false" in commande
     assert "tradeup-quotidien-matin" in commande
+
+
+# --- Linux : minuteur systemd ------------------------------------------------
+# Un portable ne tourne pas la nuit : un passage par jour, borne en duree,
+# rattrape au demarrage.
+
+
+def test_le_minuteur_rattrape_un_passage_manque(tmp_path):
+    from tradeupfinder.schedule import UNITE, unites_systemd
+
+    minuteur = unites_systemd(tmp_path, "/py")[f"{UNITE}.timer"]
+    assert "Persistent=true" in minuteur
+    assert "OnCalendar=*-*-* " in minuteur
+
+
+def test_le_service_borne_le_passage_et_tolere_ses_codes(tmp_path):
+    from tradeupfinder.schedule import UNITE, unites_systemd
+
+    service = unites_systemd(tmp_path, "/py", minutes=45)[f"{UNITE}.service"]
+    assert 'Environment="MAX_MINUTES=45"' in service
+    # 10 = contrat rentable, 3 = verrou pris : ni l'un ni l'autre n'est un echec.
+    assert "SuccessExitStatus=3 10" in service
+
+
+def test_les_chemins_avec_espaces_sont_entre_guillemets(tmp_path):
+    """Le dossier du projet s'appelle "projets vscode" sur la machine reelle."""
+    from tradeupfinder.schedule import UNITE, unites_systemd
+
+    racine = tmp_path / "projets vscode"
+    service = unites_systemd(racine, "/a b/python")[f"{UNITE}.service"]
+    assert f'ExecStart="{racine}/scripts/balayage.sh"' in service
+    assert 'Environment="PYTHON=/a b/python"' in service
+
+
+def test_le_lanceur_linux_existe_et_est_executable():
+    import os
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "balayage.sh"
+    assert script.exists() and os.access(script, os.X_OK)
+    texte = script.read_text(encoding="utf-8")
+    assert "sweep" in texte and "MAX_MINUTES" in texte

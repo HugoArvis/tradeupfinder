@@ -26,6 +26,7 @@ parfaitement silencieux.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -151,6 +152,77 @@ def taches(racine: Path | None = None) -> list[Tache]:
 def supporte() -> bool:
     """Le planificateur de ce systeme est-il celui qu'on sait piloter ?"""
     return sys.platform == "win32"
+
+
+# --- Linux : un minuteur systemd de l'utilisateur ----------------------------
+#
+# Un portable ne tourne pas la nuit. Sous Linux, on planifie donc UN balayage
+# par jour, borne en duree, et rattrape au demarrage si la machine etait
+# eteinte a l'heure dite (`Persistent=true`, l'equivalent de
+# `StartWhenAvailable`). Les passages `daily` ne sont pas planifies : ils
+# travaillent sur les prix Steam, que la strategie n'utilise plus.
+
+#: Nom des unites systemd (service et minuteur).
+UNITE = "tradeupfinder-balayage"
+
+#: Heure du passage. Machine eteinte a cette heure : passage au demarrage.
+HEURE_LINUX = "10:00"
+
+#: Duree d'un passage. Une collection prend 7 a 8 minutes : une heure par jour
+#: couvre les 88 collections Mil-Spec en un peu plus d'une semaine.
+MINUTES_LINUX = 60
+
+
+def supporte_systemd() -> bool:
+    """Peut-on piloter le gestionnaire systemd de l'utilisateur ?"""
+    return sys.platform.startswith("linux") and shutil.which("systemctl") is not None
+
+
+def dossier_unites() -> Path:
+    """Ou systemd cherche les unites d'un utilisateur."""
+    return Path.home() / ".config" / "systemd" / "user"
+
+
+def unites_systemd(racine: Path | None = None, python: str | None = None,
+                   minutes: int = MINUTES_LINUX) -> dict[str, str]:
+    """Le service et le minuteur, par nom de fichier.
+
+    Construits sans rien ecrire, pour qu'un test les verifie. Les chemins sont
+    entre guillemets : le dossier du projet peut contenir des espaces.
+    """
+    base = racine or Path(__file__).resolve().parents[2]
+    python = python or sys.executable
+    script = base / "scripts" / "balayage.sh"
+    service = f"""[Unit]
+Description=Balayage TradeUpFinder ({minutes} min, reprend ou il s'est arrete)
+
+[Service]
+Type=oneshot
+WorkingDirectory={base}
+Environment="PYTHON={python}"
+Environment="MAX_MINUTES={minutes}"
+Environment=PYTHONIOENCODING=utf-8
+# Au demarrage, le reseau peut ne pas etre pret : on attend CSFloat jusqu'a
+# 5 minutes plutot que d'echouer sur la premiere requete. `$$` : un `$`
+# litteral pour systemd, qui remplace sinon `$...` par une variable.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 30); do getent hosts csfloat.com >/dev/null && exit 0; sleep 10; done; exit 0'
+ExecStart="{script}"
+# 10 : contrat rentable trouve ; 3 : un autre balayage tenait le verrou.
+SuccessExitStatus=3 10
+TimeoutStartSec={minutes + 30}min
+"""
+    minuteur = f"""[Unit]
+Description=Balayage TradeUpFinder quotidien
+
+[Timer]
+OnCalendar=*-*-* {HEURE_LINUX}
+# Machine eteinte a l'heure dite : le passage est fait au demarrage.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    return {f"{UNITE}.service": service, f"{UNITE}.timer": minuteur}
 
 
 def equivalent_cron(racine: Path | None = None) -> str:

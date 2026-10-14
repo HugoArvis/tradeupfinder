@@ -512,3 +512,23 @@ def test_sweep_revend_sur_csfloat_par_defaut(monkeypatch, tmp_path):
 def test_sweep_peut_encore_revendre_sur_steam(monkeypatch, tmp_path):
     code, appels, steam = _sweep(monkeypatch, tmp_path, "--sell-market", "steam")
     assert appels[0]["sell_source"] is steam.return_value
+
+
+def test_sweep_s_efface_si_un_autre_balayage_tourne(monkeypatch, tmp_path,
+                                                    verrou_isole):
+    """Deux balayages doubleraient le debit CSFloat : le second s'arrete, avec
+    un code non nul pour qu'un planificateur ne le compte pas comme reussi."""
+    import json as _json
+    import os as _os
+    import time as _time
+
+    verrou_isole.write_text(_json.dumps(
+        {"pid": _os.getppid(), "qui": "application", "depuis": _time.time()}))
+    code, appels, _ = _sweep(monkeypatch, tmp_path)
+    assert code == 3 and appels == []
+    assert verrou_isole.exists()  # le verrou de l'autre est intact
+
+
+def test_sweep_rend_le_verrou_en_finissant(monkeypatch, tmp_path, verrou_isole):
+    code, _, _ = _sweep(monkeypatch, tmp_path)
+    assert code == 0 and not verrou_isole.exists()
