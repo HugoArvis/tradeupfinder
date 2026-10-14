@@ -131,6 +131,12 @@ const __cas = [
   // Un plan journalise AVANT l'ajout des prix d'ordre n'a pas le champ. Le
   // bloc doit disparaitre, pas lever ni afficher un tableau vide.
   // Un plan journalise avant les paniers suivants n'a pas le champ.
+  // Achat et revente sur CSFloat : les voies Steam disparaissent, l'ordre
+  // CSFloat apparait, et aucun "Prix CSFloat, pas CSFloat".
+  ['carte, revente CSFloat',
+   () => carte({ ...__plan, sell_market: 'CSFloat', cost_alt: null,
+                 profitability_alt: null, order_budget: null,
+                 order_discount: null, order_lines: null }, 'abc', false)],
   ['carte, plan sans paniers suivants',
    () => carte({ ...__plan, next_baskets: undefined }, 'abc', false)],
   ['carte, aucun panier suivant',

@@ -87,7 +87,6 @@ def _balayer(app, monkeypatch, build_plan):
     monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
     monkeypatch.setattr(app, "load_currency", lambda: None)
     monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
-    monkeypatch.setattr(app, "revente", lambda: None)
     return app.start_batch("mil-spec")
 
 
@@ -172,9 +171,10 @@ def test_un_balayage_fini_laisse_lancer_le_suivant(app, monkeypatch):
 # redemarrage du serveur, et refaisait ce qui venait d'etre calcule.
 
 
-def _plan_journal(collection):
+def _plan_journal(collection, sell_market="CSFloat"):
     return {"collection": collection, "cost": 1.0, "net": 1.5, "profit": 0.5,
-            "roi": 0.5, "profitability": 1.5, "avg_float": 0.1, "outcomes": [{}]}
+            "roi": 0.5, "profitability": 1.5, "avg_float": 0.1, "outcomes": [{}],
+            "sell_market": sell_market}
 
 
 def _app_journal(tmp_path, monkeypatch, appels):
@@ -190,7 +190,6 @@ def _app_journal(tmp_path, monkeypatch, appels):
     monkeypatch.setattr("tradeupfinder.web.build_plan", build_plan)
     monkeypatch.setattr(app, "load_currency", lambda: None)
     monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
-    monkeypatch.setattr(app, "revente", lambda: None)
     return app, j
 
 
@@ -207,6 +206,23 @@ def test_une_collection_recente_est_reprise_sans_recalcul(tmp_path, monkeypatch)
     assert batch.reused == 1 and batch.total == 2
     # ... mais son plan reste dans les resultats, comme s'il venait d'etre fait.
     assert [d["plan_id"] for d in app.batch_payload(batch)["results"]] == [pid]
+    j.close()
+
+
+def test_un_plan_estime_sur_steam_n_est_pas_repris(tmp_path, monkeypatch):
+    """La revente s'estime sur CSFloat : un plan revendu sur Steam compte en
+    monnaie Steam, il n'est ni repris ni pris pour deja calcule."""
+    appels: list[str] = []
+    app, j = _app_journal(tmp_path, monkeypatch, appels)
+    j.save_plan(_plan_journal("Collection A", sell_market="Steam"),
+                collection_id="col_a", rarity="mil-spec")
+
+    batch = app.start_batch("mil-spec")
+    _attendre(batch, "finished")
+
+    assert sorted(appels) == ["col_a", "col_b"]
+    assert batch.reused == 0
+    assert app.journal.latest_profitable("mil-spec", sell_market="CSFloat") == []
     j.close()
 
 
@@ -582,7 +598,6 @@ def test_un_plan_aux_sorties_non_cotees_nest_pas_enregistre(app, monkeypatch):
     monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **k: FauxPlan())
     monkeypatch.setattr(app, "load_currency", lambda: None)
     monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
-    monkeypatch.setattr(app, "revente", lambda: None)
 
     batch = app.start_batch("mil-spec")
     for _ in range(200):
@@ -611,7 +626,6 @@ def test_un_plan_non_cote_ne_fait_pas_sauter_la_collection_suivante(app, monkeyp
     monkeypatch.setattr("tradeupfinder.web.build_plan", lambda *a, **k: FauxPlan())
     monkeypatch.setattr(app, "load_currency", lambda: None)
     monkeypatch.setattr("tradeupfinder.web.CSFloat", lambda *a, **k: None)
-    monkeypatch.setattr(app, "revente", lambda: None)
 
     batch = app.start_batch("mil-spec")
     for _ in range(200):

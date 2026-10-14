@@ -249,19 +249,17 @@ n'achète pas un float précis — dans ce cas montez à `--float-pct 0.5`.
 | Paniers suivants : répéter un contrat avec les annonces restantes | fait — `Plan.next_baskets` |
 | Balayage depuis l'application : un seul à la fois, reprise, rechargement | fait |
 | `plan` dans la devise du compte CSFloat | fait |
-| Revente estimée sur CSFloat dans l'application et le balayage | **à faire** — seul `plan` le fait |
+| Revente estimée sur CSFloat dans l'application et le balayage | fait — `sweep --sell-market steam` en option |
 | Buff163 | non commencé |
 
 ### Prochaines étapes suggérées
 
-1. **Estimer la revente sur CSFloat** dans l'application et dans `sweep`, au
-   moins en option : c'est la monnaie qu'on veut retirer, et le choix du marché
-   de revente a suffi à rendre gagnant ou perdant le seul contrat mesuré.
-2. **Ne plus attendre Steam quand il refuse.** Chaque collection d'un balayage
-   perd environ 5 minutes en tentatives avant de couper ; le marché devrait
-   retenir son refus d'une collection à l'autre.
-3. **Buff163** comme troisième marché, notamment à la revente.
-4. **Mesurer la loi réelle des floats d'entrée.** `--float-model random` les
+1. **Ne plus attendre Steam quand il refuse**, là où il sert encore
+   (`daily`, `sweep --sell-market steam`) : chaque collection perd environ
+   5 minutes en tentatives avant de couper ; le marché devrait retenir son
+   refus d'une collection à l'autre.
+2. **Buff163** comme troisième marché, notamment à la revente.
+3. **Mesurer la loi réelle des floats d'entrée.** `--float-model random` les
    suppose uniformes dans leur palier. C'est l'hypothèse honnête faute de
    données, mais la distribution réelle des floats en circulation n'est
    probablement pas plate — un relevé sur les annonces CSFloat le dirait.

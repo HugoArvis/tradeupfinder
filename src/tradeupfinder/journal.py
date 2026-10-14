@@ -168,6 +168,15 @@ class Contract:
         return d is not None and d <= time.time()
 
 
+def _du_marche(payload: dict, sell_market: str | None) -> bool:
+    """Le plan a-t-il ete valorise sur `sell_market` ? None : tout passe.
+
+    Un plan enregistre avant que le payload ne porte son marche de revente est
+    de marche INCONNU : il ne passe aucun filtre plutot que d'etre suppose.
+    """
+    return sell_market is None or payload.get("sell_market") == sell_market
+
+
 class Journal:
     """Acces au journal. Sans dependance : SQLite de la bibliotheque standard."""
 
@@ -223,7 +232,8 @@ class Journal:
         ]
 
     def latest_profitable(
-        self, rarity: str, *, seuil: float = 1.0, max_age: float = 36 * 3600
+        self, rarity: str, *, seuil: float = 1.0, max_age: float = 36 * 3600,
+        sell_market: str | None = None,
     ) -> list[dict]:
         """Derniers plans RENTABLES d'une rarete, un par collection.
 
@@ -235,6 +245,10 @@ class Journal:
         On ne garde que la cotation la PLUS RECENTE par collection : les
         anciennes sont des etats du marche revolus, pas des candidats
         concurrents.
+
+        `sell_market` ne garde que les plans valorises sur ce marche : un plan
+        estime sur Steam compte en monnaie Steam, il ne se lit pas a cote d'un
+        plan estime en argent retirable.
         """
         rows = self._conn.execute(
             """SELECT * FROM plans WHERE rarity = ? AND created_at >= ?
@@ -247,8 +261,10 @@ class Journal:
         for r in rows:
             if r["collection_id"] in vus:
                 continue
-            vus.add(r["collection_id"])
             payload = json.loads(r["payload"])
+            if not _du_marche(payload, sell_market):
+                continue
+            vus.add(r["collection_id"])
             # `profitability` manque aux plans enregistres avant son
             # introduction : on la recalcule plutot que d'ecarter la ligne.
             prof = payload.get("profitability")
@@ -268,22 +284,37 @@ class Journal:
         sortie.sort(key=lambda d: -d["profitability"])
         return sortie
 
-    def last_swept(self, rarity: str) -> dict[str, float]:
+    def last_swept(self, rarity: str, *, sell_market: str | None = None) -> dict[str, float]:
         """Quand chaque collection a-t-elle ete calculee pour la derniere fois ?
 
         Sert a REPRENDRE un balayage la ou il s'est arrete. Sans cet ordre, un
         balayage coupe par le quota ou par la limite de duree repart de la
         premiere collection la nuit suivante -- et refait eternellement les
         memes, sans jamais atteindre les autres.
-        """
-        rows = self._conn.execute(
-            """SELECT collection_id, MAX(created_at) AS dernier FROM plans
-               WHERE rarity = ? GROUP BY collection_id""",
-            (rarity,),
-        ).fetchall()
-        return {r["collection_id"]: r["dernier"] for r in rows}
 
-    def recent_plans(self, rarity: str, max_age: float) -> dict[str, tuple[str, dict]]:
+        Avec `sell_market`, une collection seulement estimee sur un autre
+        marche compte comme jamais calculee : son plan ne sert pas.
+        """
+        if sell_market is None:
+            rows = self._conn.execute(
+                """SELECT collection_id, MAX(created_at) AS dernier FROM plans
+                   WHERE rarity = ? GROUP BY collection_id""",
+                (rarity,),
+            ).fetchall()
+            return {r["collection_id"]: r["dernier"] for r in rows}
+        sortie: dict[str, float] = {}
+        for r in self._conn.execute(
+            "SELECT collection_id, created_at, payload FROM plans WHERE rarity = ?",
+            (rarity,),
+        ):
+            if _du_marche(json.loads(r["payload"]), sell_market):
+                cid = r["collection_id"]
+                sortie[cid] = max(sortie.get(cid, 0.0), r["created_at"])
+        return sortie
+
+    def recent_plans(
+        self, rarity: str, max_age: float, *, sell_market: str | None = None
+    ) -> dict[str, tuple[str, dict]]:
         """Le dernier plan de chaque collection calculee depuis `max_age` s.
 
         Renvoie {collection_id: (plan_id, payload)}. Sert a un balayage de
@@ -299,8 +330,11 @@ class Journal:
         ).fetchall()
         sortie: dict[str, tuple[str, dict]] = {}
         for r in rows:
-            if r["collection_id"] not in sortie:
-                sortie[r["collection_id"]] = (r["id"], json.loads(r["payload"]))
+            if r["collection_id"] in sortie:
+                continue
+            payload = json.loads(r["payload"])
+            if _du_marche(payload, sell_market):
+                sortie[r["collection_id"]] = (r["id"], payload)
         return sortie
 
     def plan_payload(self, plan_id: str) -> dict | None:

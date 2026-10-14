@@ -415,6 +415,10 @@ class Plan:
     # souvent d'autres. Les acheter le meme jour fait tomber tous les verrous
     # de 7 jours ensemble -- plusieurs contrats pour un seul cycle.
     next_baskets: tuple[tuple[InputOption, ...], ...] = ()
+    # Le marche ou la sortie a ete valorisee. Un plan estime sur Steam et un
+    # plan estime sur CSFloat ne se comparent pas : le premier compte en
+    # monnaie Steam, le second en argent retirable.
+    sell_market: str = "CSFloat"
 
     def basket_profitability(self, panier) -> float | None:
         """Profitabilite d'un panier suivant : meme EV, autre cout."""
@@ -746,6 +750,7 @@ def build_plan(
                 rarity=rarity,
                 listings_examined=examinees,
                 float_budget=budget,
+                sell_market=nom_marche(sell_source),
                 replis=pricer.replis,
                 downgrade_net=_net_si_palier_rate(result, pricer),
                 exit_value=_valeur_de_revente(selection, pricer, sell_fee),
@@ -767,6 +772,18 @@ def build_plan(
         )
         meilleur = replace(meilleur, next_baskets=_paniers_suivants(toutes, meilleur))
     return meilleur
+
+
+def nom_marche(sell_source: PriceSource | None) -> str:
+    """Le marche de revente d'un plan, tel que le payload et la page le nomment.
+
+    Sans source de revente, `CSFloatPricer` valorise la sortie sur CSFloat
+    lui-meme : c'est le marche d'achat.
+    """
+    if sell_source is None:
+        return "CSFloat"
+    return {"steam": "Steam", "csfloat": "CSFloat"}.get(
+        sell_source.name, sell_source.name)
 
 
 #: Paniers au plus, le premier compris. Au-dela, l'information ne change aucune
@@ -1012,12 +1029,13 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         "rarity": plan.rarity.label,
         "rarity_target": plan.rarity.next_up.label,
         "currency": devise,
-        # Les entrees sont achetees sur CSFloat, la revente estimee sur Steam.
-        # Sans le dire, on verifie un prix d'entree sur Steam et on conclut a
+        # Les entrees sont achetees sur CSFloat, la revente estimee sur le
+        # marche du plan. Sans le dire, on verifie un prix d'entree sur Steam
+        # et on conclut a
         # une erreur : mesure sur le M4A4 | Zubastick (WW), 0,07 EUR sur
         # CSFloat contre 0,11 sur Steam. Les deux chiffres sont justes.
         "buy_market": "CSFloat",
-        "sell_market": "Steam",
+        "sell_market": plan.sell_market,
         "cost": c(r.cost),
         "net": c(r.ev_net),
         "profit": c(r.ev_profit),

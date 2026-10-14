@@ -389,6 +389,7 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
         deep_cost = 11.0           # et plus cher encore sans arriver premier
         deep_profitability = 12.0 / 11.0
         fragile = False
+        sell_market = "Steam"
         # Un panier suivant de dix options a 1 USD : 10 USD.
         next_baskets = (tuple(FauxOption() for _ in range(10)),)
         float_subi_compatible = True
@@ -472,3 +473,42 @@ def test_plan_reste_en_usd_si_la_devise_est_illisible(capsys):
     assert cli._devise_du_compte(source) == ("USD", 1.0)
     # Le repli se dit : sans cela "USD" se lirait comme la devise du compte.
     assert "illisible" in capsys.readouterr().err
+
+
+# --- Marche de revente du balayage -------------------------------------------
+# La strategie achete et revend sur CSFloat pour retirer l'argent : `sweep`
+# estime donc la revente sur CSFloat par defaut, sans interroger Steam -- ce qui
+# lui epargne aussi les minutes d'attente quand Steam refuse.
+
+
+def _sweep(monkeypatch, tmp_path, *options):
+    from tradeupfinder.journal import Journal
+
+    appels: list[dict] = []
+
+    def build_plan(db, col, rarity, source, **kw):
+        appels.append(kw)
+        return None
+
+    steam = mock.Mock()
+    monkeypatch.setattr(cli, "build_plan", build_plan)
+    monkeypatch.setattr(cli, "CSFloat", lambda *a, **k: mock.Mock(
+        usd_rate=lambda devise: 0.9))
+    monkeypatch.setattr(cli, "SteamMarket", steam)
+    monkeypatch.setattr(cli, "Journal", lambda: Journal(tmp_path / "j.db"))
+    monkeypatch.setattr(cli, "csfloat_api_key", lambda k: "cle")
+    code = cli.main(["sweep", "--rarity", "mil-spec",
+                     "--collections", "The Bank Collection", *options])
+    return code, appels, steam
+
+
+def test_sweep_revend_sur_csfloat_par_defaut(monkeypatch, tmp_path):
+    code, appels, steam = _sweep(monkeypatch, tmp_path)
+    assert code == 0 and len(appels) == 1
+    assert "sell_source" not in appels[0]
+    steam.assert_not_called()
+
+
+def test_sweep_peut_encore_revendre_sur_steam(monkeypatch, tmp_path):
+    code, appels, steam = _sweep(monkeypatch, tmp_path, "--sell-market", "steam")
+    assert appels[0]["sell_source"] is steam.return_value
