@@ -45,6 +45,11 @@ Ce détour n'est pas une formalité : les bugs les plus coûteux du projet
 l'utilisateur en lisant un résultat, jamais par l'instance qui venait de les
 écrire.
 
+Chaque pull request déclenche le workflow `Tests` (pyflakes, pytest,
+`check_js`, sous Python 3.11 et 3.14). Il ne touche à aucune API : le dépôt est
+public, et ses journaux d'exécution aussi — un balayage réel y exposerait les
+contrats rentables. Un workflow rouge se corrige avant de demander la relecture.
+
 `gh` n'est pas installé sur la machine de développement. À défaut, l'URL
 `https://github.com/HugoArvis/tradeupfinder/compare/dev...<branche>?expand=1`
 ouvre la pull request avec la bonne base.
