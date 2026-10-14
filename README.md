@@ -188,6 +188,12 @@ cher pour vendre dans le marché bon marché : on paie l'écart de change entre
 monnaie captive et argent réel. `--sell-market csfloat` permet de mesurer cette
 combinaison — avec `--currency USD`, sans quoi les montants mélangent EUR et USD.
 
+Le même écart joue dans l'autre sens à la **sortie** : revendre sur Steam puis
+convertir le crédit en argent retirable ne rend qu'environ 62 %. Mesuré sur un
+contrat réel en octobre 2026 : sortie revendue sur CSFloat, **+0,27 €**
+retirables ; la même revendue sur Steam puis ressortie, **−1,04 €**. Si
+l'objectif est de retirer, on achète **et** on revend sur CSFloat.
+
 ## Classement
 
 Par défaut `risk_adjusted` = profit espéré / écart-type. Un contrat à +2 € d'EV
@@ -239,12 +245,23 @@ n'achète pas un float précis — dans ce cas montez à `--float-pct 0.5`.
 | Liquidité des ENTRÉES | fait — `--min-input-volume`, `sourcing_days` |
 | Contrats StatTrak | fait — `--stattrak` |
 | Trade-ups depuis l'inventaire possédé | fait — commande `inventory` |
+| Bouton « Ouvrir les N annonces » (l'API CSFloat n'a pas de panier) | fait — application et page HTML |
+| Paniers suivants : répéter un contrat avec les annonces restantes | fait — `Plan.next_baskets` |
+| Balayage depuis l'application : un seul à la fois, reprise, rechargement | fait |
+| `plan` dans la devise du compte CSFloat | fait |
+| Revente estimée sur CSFloat dans l'application et le balayage | **à faire** — seul `plan` le fait |
 | Buff163 | non commencé |
 
 ### Prochaines étapes suggérées
 
-1. **Buff163** comme troisième marché, notamment à la revente.
-2. **Mesurer la loi réelle des floats d'entrée.** `--float-model random` les
+1. **Estimer la revente sur CSFloat** dans l'application et dans `sweep`, au
+   moins en option : c'est la monnaie qu'on veut retirer, et le choix du marché
+   de revente a suffi à rendre gagnant ou perdant le seul contrat mesuré.
+2. **Ne plus attendre Steam quand il refuse.** Chaque collection d'un balayage
+   perd environ 5 minutes en tentatives avant de couper ; le marché devrait
+   retenir son refus d'une collection à l'autre.
+3. **Buff163** comme troisième marché, notamment à la revente.
+4. **Mesurer la loi réelle des floats d'entrée.** `--float-model random` les
    suppose uniformes dans leur palier. C'est l'hypothèse honnête faute de
    données, mais la distribution réelle des floats en circulation n'est
    probablement pas plate — un relevé sur les annonces CSFloat le dirait.
