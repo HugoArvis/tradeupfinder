@@ -403,6 +403,15 @@ def cmd_plan(args) -> int:
 
     print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
           f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
+    if plan.next_baskets:
+        print(f"\nREPETER MAINTENANT : {len(plan.next_baskets)} panier(s) de plus "
+              f"avec les annonces restantes, meme contrainte de float.")
+        for n, panier in enumerate(plan.next_baskets, 2):
+            cout = sum(o.unit_cost for o in panier)
+            print(f"  panier n. {n} : {m(cout):7.2f}  profitabilite "
+                  f"{plan.basket_profitability(panier):.0%}")
+    else:
+        print("\nAucun autre panier rentable dans les annonces lues.")
     lent = plan.slowest_outcome
     if lent is not None:
         nom, st = lent

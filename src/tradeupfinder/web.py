@@ -1459,6 +1459,7 @@ function carte(p, planId, archive) {
     ${voies(p)}
     ${alertes.join('')}
     ${detailAnnonces(p)}
+    ${detailPaniersSuivants(p)}
     ${detailOrdres(p)}
     <details>
       <summary>Ce que le contrat peut sortir
@@ -1495,7 +1496,10 @@ function voies(p) {
     <td class="num">${p.cost.toFixed(2)}</td>
     <td class="num prof">${profTexte(p.profitability)}</td>
     <td class="muted libre">float choisi, disponible tout de suite ·
-      <b>verrou 7 jours</b> · non répétable</td></tr>`);
+      <b>verrou 7 jours</b> · ${(p.next_baskets || []).length
+        ? `<b>${p.next_baskets.length} panier(s) de plus</b> faisables
+           maintenant, détail ci-dessous`
+        : 'aucun autre panier rentable dans les annonces lues'}</td></tr>`);
 
   if (p.float_subi_ok === false) {
     lignes.push(`<tr><td><b>Ordre d’achat ${revente}</b></td>
@@ -1512,8 +1516,10 @@ function voies(p) {
         : `à −${Math.round(p.order_discount * 100)} %`}</td>
       <td class="num">${p.order_budget.toFixed(2)}</td>
       <td class="num prof">visé</td>
-      <td class="muted libre">float <b>subi</b> · <b>répétable</b>, l’ordre se pose
-        une fois · sans verrou</td></tr>`);
+      <td class="muted libre">float <b>subi</b> · sans verrou ·
+        <b>rarement servi</b> : un ordre à −32 % est resté 14 jours sans
+        exécution (test réel, octobre 2026), Steam ne sert qu’à quelques
+        centimes sous la plus basse annonce</td></tr>`);
   }
 
   if (p.cost_alt === null || p.cost_alt === undefined) {
@@ -1568,6 +1574,38 @@ function detailAnnonces(p) {
     <p class="muted">Float moyen ${p.avg_float.toFixed(4)} sur
     ${p.listings_examined} annonces examinées.</p>
   </details>`;
+}
+
+// Les paniers n. 2, 3... composes avec les annonces que le n. 1 laisse, sous
+// la meme contrainte de float. Les acheter le meme jour fait tomber tous les
+// verrous de 7 jours ensemble : plusieurs contrats pour un seul cycle.
+function detailPaniersSuivants(p) {
+  const paniers = p.next_baskets || [];
+  if (!paniers.length) return '';
+  const achat = p.buy_market || 'CSFloat';
+  const lignes = paniers.map((b, i) => `<details>
+    <summary>Panier n° ${i + 2} — ${b.cost.toFixed(2)} ·
+      ${profTexte(b.profitability)}</summary>
+    <div class="scroll"><table>
+      <thead><tr><th>Objet</th><th class="num">Float</th>
+        <th class="num">Prix</th><th></th></tr></thead>
+      <tbody>${b.inputs.map(x => `<tr>
+        <td>${x.name}</td>
+        <td class="num">${x.float.toFixed(4)}</td>
+        <td class="num">${x.price.toFixed(2)}</td>
+        <td>${x.url ? `<a class="buy" href="${x.url}" target="_blank">Acheter</a>`
+          : '<span class="muted">annonce non identifiée</span>'}</td></tr>`).join('')}
+      </tbody>
+    </table></div>
+    ${boutonOnglets(b.inputs.map(x => x.url))}
+  </details>`).join('');
+  return `<div class="etape">Répéter maintenant : ${paniers.length} panier(s) de
+      plus sur ${achat}</div>
+    <p class="muted">Composés avec les annonces que le panier n° 1 laisse, sous
+    la même contrainte de float : mêmes sorties, autre coût. Achetés le même
+    jour, leurs verrous de 7 jours tombent ensemble. Les annonces lues sont
+    limitées par objet : le carnet peut en contenir plus, jamais moins.</p>
+    ${lignes}`;
 }
 
 // L'API CSFloat n'a pas de panier : on ouvre chaque annonce dans un onglet, et
