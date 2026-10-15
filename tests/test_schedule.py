@@ -205,3 +205,50 @@ def test_le_lanceur_linux_existe_et_est_executable():
     assert script.exists() and os.access(script, os.X_OK)
     texte = script.read_text(encoding="utf-8")
     assert "sweep" in texte and "MAX_MINUTES" in texte
+
+
+def test_un_echec_est_retente_au_lieu_de_perdre_la_journee(tmp_path):
+    """Mesure le 15 octobre 2026 : reseau absent au reveil, passage perdu."""
+    from tradeupfinder.schedule import UNITE, unites_systemd
+
+    service = unites_systemd(tmp_path, "/py")[f"{UNITE}.service"]
+    assert "Restart=on-failure" in service
+    assert "RestartSec=15min" in service
+    # Les relances sont bornees : 12 essais de 15 min tiennent dans 4 h.
+    assert "StartLimitIntervalSec=4h" in service
+    assert "StartLimitBurst=13" in service
+    # L'attente du reseau est dans le script, qui sort en echec sans lui --
+    # plus de pre-commande qui laissait partir `sweep` hors ligne.
+    assert "ExecStartPre" not in service
+
+
+def test_sans_reseau_le_script_sort_en_echec_temporaire(tmp_path):
+    """Le script ne lance pas `sweep` hors ligne : il sort en code 75, que
+    systemd relance plus tard."""
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    racine = tmp_path / "projet"
+    (racine / "scripts").mkdir(parents=True)
+    (racine / "data").mkdir()
+    source = Path(__file__).resolve().parents[1] / "scripts" / "balayage.sh"
+    shutil.copy(source, racine / "scripts" / "balayage.sh")
+
+    # Faux programmes : `getent` ne resout jamais, `sleep` n'attend pas, et
+    # `python` note s'il a ete appele.
+    faux = tmp_path / "bin"
+    faux.mkdir()
+    for nom, corps in {"getent": "exit 2", "sleep": "exit 0",
+                       "python": f"touch {tmp_path}/sweep_lance"}.items():
+        (faux / nom).write_text(f"#!/bin/sh\n{corps}\n")
+        (faux / nom).chmod(0o755)
+
+    env = {**os.environ, "PATH": f"{faux}:{os.environ['PATH']}",
+           "PYTHON": str(faux / "python")}
+    r = subprocess.run(["sh", str(racine / "scripts" / "balayage.sh")], env=env)
+
+    assert r.returncode == 75
+    assert not (tmp_path / "sweep_lance").exists()
+    assert "pas de reseau" in (racine / "data" / "balayage.log").read_text()

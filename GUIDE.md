@@ -69,7 +69,9 @@ n'y a rien à en faire.
   jour à 10 h pendant 60 minutes, ou au démarrage si le portable était éteint
   à cette heure-là. C'est une tâche `systemd` de votre compte, sans droits
   administrateur. Chaque passage reprend là où le précédent s'est arrêté : les
-  88 collections Mil-Spec sont couvertes en un peu plus d'une semaine.
+  88 collections Mil-Spec sont couvertes en un peu plus d'une semaine. Si le
+  réseau n'est pas encore revenu au réveil du portable, le passage est retenté
+  toutes les 15 minutes pendant 3 heures.
   `schedule` sans option dit quand aura lieu le prochain passage et comment se
   sont terminés les derniers ; `schedule --remove` la retire.
 

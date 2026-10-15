@@ -645,6 +645,15 @@ démarrage un passage manqué — l'équivalent de `StartWhenAvailable`. Dans le
 unités, un `$` littéral s'écrit `$$`, et les chemins sont entre guillemets : le
 dossier du projet contient un espace.
 
+**Au réveil d'un portable, le réseau n'est pas là.** Mesuré le 15 octobre 2026 :
+passage parti à 10:00, Wi-Fi absent plus de 5 minutes, `sweep` en échec sur le
+taux de change — et la journée perdue, le minuteur ne repassant que le
+lendemain. `balayage.sh` attend donc CSFloat 5 minutes puis sort en code **75**
+(échec temporaire) sans lancer `sweep`, et le service se relance toutes les
+15 minutes (`Restart=on-failure`), 3 heures au plus (`StartLimitBurst`).
+L'attente était d'abord une pré-commande qui finissait par `exit 0` : elle
+laissait partir `sweep` hors ligne.
+
 `BudgetEpuise` est distincte d'un échec : la collection n'a pas raté, elle n'a
 pas fini. Elle reste donc dans la file et le passage suivant la reprend comme
 jamais calculée.

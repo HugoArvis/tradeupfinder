@@ -195,6 +195,10 @@ def unites_systemd(racine: Path | None = None, python: str | None = None,
     script = base / "scripts" / "balayage.sh"
     service = f"""[Unit]
 Description=Balayage TradeUpFinder ({minutes} min, reprend ou il s'est arrete)
+# Un echec -- reseau absent au reveil, le plus souvent -- est retente toutes les
+# 15 minutes pendant 3 heures au plus, au lieu de faire perdre la journee.
+StartLimitIntervalSec=4h
+StartLimitBurst=13
 
 [Service]
 Type=oneshot
@@ -202,13 +206,12 @@ WorkingDirectory={base}
 Environment="PYTHON={python}"
 Environment="MAX_MINUTES={minutes}"
 Environment=PYTHONIOENCODING=utf-8
-# Au demarrage, le reseau peut ne pas etre pret : on attend CSFloat jusqu'a
-# 5 minutes plutot que d'echouer sur la premiere requete. `$$` : un `$`
-# litteral pour systemd, qui remplace sinon `$...` par une variable.
-ExecStartPre=/bin/sh -c 'for i in $$(seq 30); do getent hosts csfloat.com >/dev/null && exit 0; sleep 10; done; exit 0'
+# Le script attend lui-meme le reseau (5 min) et sort en code 75 sans lui.
 ExecStart="{script}"
 # 10 : contrat rentable trouve ; 3 : un autre balayage tenait le verrou.
 SuccessExitStatus=3 10
+Restart=on-failure
+RestartSec=15min
 TimeoutStartSec={minutes + 30}min
 """
     minuteur = f"""[Unit]
