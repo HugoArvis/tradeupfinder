@@ -109,6 +109,22 @@ Si une source expose `sell_net_at_float(...)`, `evaluate()` l'utilise au lieu de
 **L'EV est constante par morceaux** en fonction de la moyenne des floats
 d'entrée : elle ne saute qu'aux frontières d'usure. `wear.wear_breakpoints()`
 les calcule, l'optimiseur évalue un point par palier au lieu d'échantillonner.
+`plan` fait de même (`_points_a_tester`) : la valeur d'une sortie ne dépend que
+de son palier, la prime de bas float étant ignorée. Il ajoutait autrefois un
+point au float de chaque annonce de sortie, ce qui obligeait à lire **toutes**
+les usures de **toutes** les sorties — 8 % des lectures en médiane, 20 % au
+plus, sur un faux carnet des 88 collections Mil-Spec — et plafonnait les points
+à 60 en en jetant au hasard, frontières d'usure comprises.
+
+**La tolérance de float se mesure à la vraie frontière**, pas à la limite
+donnée à la sélection : le panier le moins cher sous une limite peut tomber un
+palier plus bas, sa falaise est alors plus proche (`_distance_a_la_falaise`).
+Sur le même faux carnet, l'ancien calcul affichait une tolérance fausse sur
+18 des 21 plans qui ont changé, presque toujours trop rassurante — 0,027
+annoncé pour 0,001 réel —, et 15 de ces paniers étaient sous la marge de
+0,005. Ces paniers ne sont pas écartés : la sélection ne rend que le moins
+cher sous une limite, les écarter ferait perdre des paniers valables du même
+palier. Ils sont annoncés tels qu'ils sont.
 La sélection sous contrainte de float est une DP sur frontière de Pareto
 (`generator._extend_frontier`, `cheapest_unique_selection`).
 

@@ -55,12 +55,12 @@ def _verifie_budget(deadline: float | None) -> None:
 class CSFloatPricer:
     """`PriceLookup` alimente par les offres reelles CSFloat.
 
-    Valorisation SENSIBLE AU FLOAT, et c'est essentiel. A l'interieur d'un meme
-    palier d'usure, le prix varie enormement : mesure sur l'AK-47 Emerald
-    Pinstripe, une Factory New se vend 24-25 USD a float 0.005 mais 17-20 a
-    float 0.070. Un modele qui ne retient qu'un prix par palier prend la moins
-    chere -- donc celle a haut float -- et conclut a tort qu'il ne sert a rien
-    de viser bas.
+    A l'interieur d'un meme palier d'usure, le prix demande varie enormement :
+    mesure sur l'AK-47 Emerald Pinstripe, une Factory New s'affiche 24-25 USD
+    a float 0.005 mais 17-20 a float 0.070. La valorisation retient pourtant
+    la moins chere annonce nue du palier, sans prime de bas float : ce sont des
+    prix demandes, rien ne dit qu'ils se concluent (`price_at_float`). La
+    valeur d'une sortie ne depend donc que de son palier.
     """
 
     def __init__(self, source: CSFloat, *, sell_fee: float = 0.02,
@@ -727,7 +727,8 @@ def build_plan(
     outcomes_map = {collection.id: outcomes}
 
     meilleur: Plan | None = None
-    for hi in _breakpoints_avec_annonces(outcomes, pricer):
+    frontieres = wear_breakpoints(outcomes)
+    for hi in _points_a_tester(outcomes):
         _verifie_budget(deadline)
         budget = (hi - max(float_margin, 1e-9)) * TRADEUP_INPUT_COUNT
         selection = cheapest_unique_selection(toutes, TRADEUP_INPUT_COUNT, budget)
@@ -740,7 +741,8 @@ def build_plan(
         ]
         atteint = sum(o.normalized for o in selection) / TRADEUP_INPUT_COUNT
         result = evaluate(
-            items, outcomes_map, pricer, cliff_distance=hi - atteint
+            items, outcomes_map, pricer,
+            cliff_distance=_distance_a_la_falaise(atteint, frontieres),
         )
         if meilleur is None or result.ev_profit > meilleur.result.ev_profit:
             meilleur = Plan(
@@ -919,47 +921,34 @@ def _valeur_de_revente(
     return total
 
 
-def _breakpoints_avec_annonces(
-    outcomes: list, pricer: CSFloatPricer, max_points: int = 60
-) -> list[float]:
-    """Moyennes d'entree a tester, frontieres d'usure ET paliers de prix.
+def _distance_a_la_falaise(atteint: float, frontieres: list[float]) -> float:
+    """Distance entre la moyenne atteinte et la VRAIE frontiere d'usure au-dessus.
 
-    Une fois la sortie cotee au float pres, l'EV ne saute plus seulement aux
-    frontieres d'usure : elle saute a chaque annonce concurrente. Viser un float
-    juste sous une annonce chere permet de se vendre a son prix. Ces points-la
-    doivent donc etre explores, sinon l'optimiseur ne verra jamais l'interet de
-    descendre en float.
-
-    Cela n'a de sens que si la revente se fait la ou le float est price. Quand
-    la sortie se vend sur Steam, le prix ne bouge pas a l'interieur d'un
-    palier : les seuls points utiles sont les frontieres d'usure, et coter les
-    annonces CSFloat des sorties devient une depense de quota sans objet.
+    Pas la limite qu'on a donnee a la selection : le panier le moins cher sous
+    une limite peut tomber un palier plus bas, et sa falaise est alors plus
+    proche que la limite. Mesurer par rapport a la limite annoncait une
+    tolerance fausse -- et rassurante : 0,027 affiche pour 0,001 reel sur un
+    plan, mesure sur un faux carnet en octobre 2026.
     """
-    points = set(wear_breakpoints(outcomes)[1:])
-    if pricer.sell_source is not None:
-        return sorted(points)
+    au_dessus = [f for f in frontieres if f > atteint + 1e-12]
+    return (min(au_dessus) if au_dessus else 1.0) - atteint
 
-    for skin in outcomes:
-        for wear in skin.available_wears():
-            book = pricer._listings(skin.market_hash_name(wear))
-            for float_annonce, _ in book:
-                # Moyenne d'entree qui produirait exactement ce float de sortie.
-                if skin.float_span <= 0:
-                    continue
-                avg = (float_annonce - skin.min_float) / skin.float_span
-                if 0.0 < avg <= 1.0:
-                    points.add(round(avg, 9))
 
-    ordonnes = sorted(points)
-    if len(ordonnes) <= max_points:
-        return ordonnes
-    # Echantillonnage regulier pour borner le cout de calcul, en gardant les
-    # extremes qui portent l'essentiel de l'information.
-    pas = len(ordonnes) / max_points
-    garde = {ordonnes[min(int(i * pas), len(ordonnes) - 1)] for i in range(max_points)}
-    garde.update(ordonnes[:5])
-    garde.update(ordonnes[-5:])
-    return sorted(garde)
+def _points_a_tester(outcomes: list) -> list[float]:
+    """Moyennes d'entree a tester : les frontieres d'usure des sorties, seules.
+
+    La valeur d'une sortie ne depend que de son palier d'usure -- la moins
+    chere annonce nue du palier, prime de bas float ignoree, voir
+    `CSFloatPricer.price_at_float`. L'EV est donc constante entre deux
+    frontieres, et un point par palier suffit.
+
+    Ajouter un point au float de chaque annonce de sortie, comme on le faisait
+    du temps ou la valorisation suivait le float, ne changeait plus aucun
+    resultat : mais il fallait pour cela lire les annonces de TOUTES les usures
+    de TOUTES les sorties, y compris celles qu'aucun panier n'atteint -- du
+    quota CSFloat et des minutes perdus a chaque collection.
+    """
+    return sorted(set(wear_breakpoints(outcomes)[1:]))
 
 
 def _net_si_palier_rate(result: TradeUpResult, pricer: CSFloatPricer) -> float | None:
