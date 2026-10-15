@@ -1,5 +1,7 @@
 # TradeUpFinder
 
+[![Tests](https://github.com/HugoArvis/tradeupfinder/actions/workflows/tests.yml/badge.svg)](https://github.com/HugoArvis/tradeupfinder/actions/workflows/tests.yml)
+
 Aide à la décision pour les **trade-up contracts CS2** : calcule l'espérance de
 gain nette après frais et la variance de chaque contrat possible, puis classe
 les candidats en privilégiant le risque faible.
@@ -269,6 +271,12 @@ n'achète pas un float précis — dans ce cas montez à `--float-pct 0.5`.
 ```bash
 python -m pytest -q
 ```
+
+Le workflow GitHub `Tests` (`.github/workflows/tests.yml`) les lance à chaque
+push sur `main` ou `dev` et à chaque pull request, sous Python 3.11 et 3.14,
+avec `pyflakes` et `scripts/check_js.py`. Il construit d'abord la base statique
+(non versionnée) et ne fait aucune requête vers CSFloat ni Steam : le balayage y
+est essayé avec un CSFloat simulé.
 
 Les tests couvrent la mécanique du float (dont les cas limites de frontières
 d'usure), la formule de probabilité en mono- et multi-collection, le parsing

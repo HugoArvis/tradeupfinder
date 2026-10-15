@@ -1,0 +1,57 @@
+# Verifie que le code tient debout a chaque push et a chaque pull request :
+# pyflakes, tests, et le JavaScript des pages.
+#
+# Ce workflow ne fait AUCUNE requete vers CSFloat ni Steam : pas de cle, pas de
+# quota consomme, rien de revele -- le depot est public, et ses journaux
+# d'execution aussi. Le balayage y est essaye avec un CSFloat simule
+# (tests/test_cli.py) : c'est ce qui aurait attrape l'import manquant qui a
+# failli faire planter le balayage planifie de 3 h 11 sans personne pour le voir.
+
+name: Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 : le minimum declare par pyproject.toml. 3.14 : la version de la
+        # machine de developpement sous Linux.
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # check_js.py execute le JavaScript des pages sous node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Installer
+        run: python -m pip install -e ".[dev]"
+
+      # data/collections.json n'est pas versionne (regenerable, ~2 Mo) : sans
+      # lui, une soixantaine de tests ne peuvent pas demarrer.
+      - name: Construire la base statique
+        run: python -m scripts.build_db
+
+      - name: pyflakes
+        run: python -m pyflakes src tests scripts
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: JavaScript des pages
+        run: python scripts/check_js.py
