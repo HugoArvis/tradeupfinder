@@ -360,6 +360,37 @@ un ordre n'est servi que **quelques centimes sous la plus basse annonce** : il
 nettement, et le prix du meilleur ordre (`highest_buy_order`) devenir la
 référence — il n'est lisible qu'à la main tant que les `item_nameid` manquent.
 
+**Sur CSFloat, un ordre d'achat avec filtre de float se remplit en quelques
+jours.** Test réel lancé le 14 octobre 2026 pour le contrat Overpass 2024
+(Mil-Spec), deux ordres de 10 exemplaires à 0,13 €, le prix au-delà duquel le
+contrat ne rapportait plus — soit le niveau du meilleur ordre déjà posé, pas
+en dessous :
+
+| ordre | filtre de float | reçus | délai |
+|---|---|---|---|
+| Galil AR \| Metallic Squeezer (FT) | 0,15 – 0,308, presque tout le palier | **10/10** | **≈ 3,5 jours** (84 h) |
+| Nova \| Wurst Hölle (BS) | 0,45 – 0,514, ≈ 1/8 du palier | 2/10 en 3,5 jours | — |
+
+Trois enseignements :
+- **un ordre CSFloat n'est pas plus lent que l'achat d'annonces** — une
+  semaine pour réunir les entrées du contrat Arabesque, vendeurs défaillants
+  compris — et ne demande aucune surveillance. Le rythme n'est pas régulier :
+  2, puis 3, puis 5 exemplaires par jour ;
+- **la largeur du filtre décide du délai** : un filtre étroit (la Nova) a été
+  servi cinq fois moins vite. Viser le plafond de float utile plutôt qu'une
+  tranche étroite ;
+- **une vente annulée par le vendeur décompte quand même l'ordre.** CSFloat a
+  pénalisé le vendeur, mais l'ordre est passé de 8 à 7 exemplaires restants au
+  lieu de rester à 8 : sans correction à la main, il se serait arrêté à 9 et le
+  contrat ne serait jamais complet, sans aucun message. Après toute
+  annulation, vérifier la quantité restante.
+
+Le filtre a aussi amené les dix floats sous le plan (normalisé 0,42 contre
+0,51) : les sorties passent du Well-Worn visé au **Field-Tested**. Sans rien y
+gagner : le 17 octobre, les deux paliers valaient le même prix sur CSFloat
+(1,31 à 1,36 € contre 1,30 à 1,49 €). Un meilleur palier n'est pas un palier
+plus cher — le prix tranche, pas l'usure.
+
 Les frais Steam ont un **plancher de 0,01 par frais**, donc ils écrasent les
 petits montants à la vente : 66 % sur un objet à 0,03 €, 28,6 % à 0,07 €, contre
 12–13 % au-delà de 0,25 €. À l'achat, le prix affiché est ce qu'on paie.
