@@ -755,3 +755,75 @@ def test_pas_de_paniers_suivants_sans_contrainte_de_float_connue():
     plan = Plan(result=None, options=tuple(toutes[:10]), collection=None,
                 listings_examined=30)
     assert _paniers_suivants(toutes, plan) == ()
+
+
+# --- Points testes et tolerance de float --------------------------------------
+# La valeur d'une sortie ne depend que de son palier : seules les frontieres
+# d'usure sont testees, et la tolerance se mesure a la VRAIE frontiere.
+
+
+def test_la_distance_se_mesure_a_la_vraie_frontiere():
+    from tradeupfinder.plan import _distance_a_la_falaise
+
+    frontieres = [0.0, 0.1429, 0.1892, 1.0]
+    assert _distance_a_la_falaise(0.18, frontieres) == pytest.approx(0.0092)
+    # Pile sur une frontiere : c'est la suivante qui compte.
+    assert _distance_a_la_falaise(0.1429, frontieres) == pytest.approx(0.0463)
+
+
+def _plan_sur_faux_carnet():
+    """Entree et sortie de range 0-1. Les dix Factory New a 0,068 sont les
+    moins cheres : elles tiennent sous la limite du palier Minimal Wear, mais
+    sortent en Factory New -- a 0,002 de la frontiere 0,07."""
+    from collections import Counter
+
+    from tradeupfinder.db import SkinDatabase
+    from tradeupfinder.models import Rarity
+    from tradeupfinder.plan import build_plan
+
+    db = SkinDatabase.from_dict({"version": "t", "collections": [{
+        "id": "c", "name": "C", "skins": [
+            {"key": "i", "name": "Arme", "rarity": "Mil-Spec Grade",
+             "min_float": 0.0, "max_float": 1.0},
+            {"key": "o", "name": "Sortie", "rarity": "Restricted",
+             "min_float": 0.0, "max_float": 1.0}]}]})
+    carnet = {
+        "Arme (Factory New)": [FakeListing(1.0, 0.068) for _ in range(10)],
+        "Arme (Minimal Wear)": [FakeListing(1.5, 0.10) for _ in range(10)],
+        "Sortie (Factory New)": [FakeListing(30.0, 0.01)],
+        "Sortie (Minimal Wear)": [FakeListing(12.0, 0.10)],
+    }
+
+    class Source:
+        def __init__(self):
+            self.lectures = Counter()
+
+        def listings(self, nom, limit=30):
+            self.lectures[nom] += 1
+            return carnet.get(nom, [])
+
+        def daily_sales(self, nom):
+            return None
+
+        def sales_history(self, nom):
+            return []
+
+    src = Source()
+    return build_plan(db, db.collection("c"), Rarity.MIL_SPEC, src), src
+
+
+def test_la_tolerance_annoncee_est_la_vraie():
+    """Mesurer par rapport a la limite donnee a la selection (0,15) annoncait
+    0,082 de marge pour un panier a 0,002 de la falaise."""
+    plan, _ = _plan_sur_faux_carnet()
+    assert plan is not None
+    assert sum(o.normalized for o in plan.options) / 10 == pytest.approx(0.068)
+    assert plan.result.cliff_distance == pytest.approx(0.002)
+
+
+def test_les_usures_de_sortie_inatteignables_ne_sont_pas_lues():
+    """Lire toutes les usures de toutes les sorties coutait du quota sans
+    jamais changer de resultat : la valeur ne depend que du palier atteint."""
+    _, src = _plan_sur_faux_carnet()
+    assert src.lectures["Sortie (Battle-Scarred)"] == 0
+    assert src.lectures["Sortie (Well-Worn)"] == 0
