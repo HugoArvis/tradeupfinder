@@ -24,7 +24,7 @@ from .models import TRADEABLE_INPUT_RARITIES, Rarity, Wear
 from .pricing.cache import QuoteCache
 from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
-from .plan import BudgetEpuise, build_plan, plan_payload
+from .plan import BudgetEpuise, build_plan, horloge, plan_payload
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .gold import GOLD_INPUT_COUNT, scan_crates
@@ -1467,11 +1467,13 @@ def _balayer(args) -> int:
               "sans que l'un des deux soit faux.", file=sys.stderr)
     file = list(cols)
     faits, echecs, rentables = 0, 0, 0
-    debut = _t.time()
+    # Horloge sans la mise en veille : un portable endormi en plein passage ne
+    # doit pas trouver son budget epuise au reveil.
+    debut = horloge()
 
     limite = args.max_minutes * 60
     while file:
-        if _t.time() - debut > limite:
+        if horloge() - debut > limite:
             print(f"  budget de {args.max_minutes} min atteint, arret propre "
                   f"({faits}/{len(cols)}). La suite ira au prochain passage.",
                   file=sys.stderr)
@@ -1559,7 +1561,7 @@ def _balayer(args) -> int:
         print(f"  [{prof:>5.0%}] {col.name:<40} {marque} "
               f"({faits}/{len(cols)}){alt}{repli}", file=sys.stderr)
 
-    duree = (_t.time() - debut) / 60
+    duree = (horloge() - debut) / 60
     print()
     print(f"Balayage termine en {duree:.0f} min : {faits} calculees, "
           f"{rentables} rentables, {echecs} sans resultat.")

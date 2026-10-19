@@ -532,3 +532,17 @@ def test_sweep_s_efface_si_un_autre_balayage_tourne(monkeypatch, tmp_path,
 def test_sweep_rend_le_verrou_en_finissant(monkeypatch, tmp_path, verrou_isole):
     code, _, _ = _sweep(monkeypatch, tmp_path)
     assert code == 0 and not verrou_isole.exists()
+
+
+def test_sweep_ne_compte_pas_la_veille_dans_son_budget(monkeypatch, tmp_path):
+    """Chaque lecture de l'horloge murale fait un bond d'une heure, comme une
+    veille entre deux collections : le passage d'une minute doit tout de meme
+    calculer sa collection."""
+    import itertools
+    import time as _t
+
+    debut = _t.time()
+    bonds = itertools.count()
+    monkeypatch.setattr(_t, "time", lambda: debut + 3600 * next(bonds))
+    code, appels, _ = _sweep(monkeypatch, tmp_path, "--max-minutes", "1")
+    assert code == 0 and len(appels) == 1
