@@ -166,7 +166,7 @@ def supporte() -> bool:
 UNITE = "tradeupfinder-balayage"
 
 #: Heure du passage. Machine eteinte a cette heure : passage au demarrage.
-HEURE_LINUX = "10:00"
+HEURE_LINUX = "09:30"
 
 #: Duree d'un passage. Une collection prend 7 a 8 minutes : une heure par jour
 #: couvre les 88 collections Mil-Spec en un peu plus d'une semaine.

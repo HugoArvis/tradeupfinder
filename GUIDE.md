@@ -66,7 +66,7 @@ n'y a rien à en faire.
 
 - **Sous Windows**, la nuit, via `scripts\balayage_nuit.cmd`.
 - **Sous Linux** (portable qu'on ne laisse pas tourner la nuit), une fois par
-  jour à 10 h pendant 60 minutes, ou au démarrage si le portable était éteint
+  jour à 9 h 30 pendant 60 minutes, ou au démarrage si le portable était éteint
   à cette heure-là. C'est une tâche `systemd` de votre compte, sans droits
   administrateur. Chaque passage reprend là où le précédent s'est arrêté : les
   88 collections Mil-Spec sont couvertes en un peu plus d'une semaine. Si le
