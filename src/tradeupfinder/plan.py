@@ -39,16 +39,30 @@ class BudgetEpuise(Exception):
     """
 
 
+def horloge() -> float:
+    """L'horloge des budgets de temps : elle ne compte pas la mise en veille.
+
+    `time.time()` avance pendant la veille. Mesure le 19 octobre 2026 : un
+    passage de 60 minutes lance a 16:36, portable mis en veille, s'est arrete
+    au reveil le lendemain matin apres 2 collections -- "termine en 1018 min",
+    budget juge depasse alors qu'il avait tourne un quart d'heure.
+    `time.monotonic()` s'arrete pendant la veille sous Linux, comme l'horloge
+    dont systemd se sert pour ses propres delais. Toute echeance passee a
+    `build_plan` se calcule donc avec CETTE fonction, jamais avec time.time().
+    """
+    import time as _t
+
+    return _t.monotonic()
+
+
 def _verifie_budget(deadline: float | None) -> None:
-    """Leve `BudgetEpuise` si l'echeance est passee.
+    """Leve `BudgetEpuise` si l'echeance (en `horloge()`) est passee.
 
     Appele aux endroits ou le temps part vraiment : une cotation par objet a
     l'entree, une evaluation par frontiere d'usure. Verifier plus finement
     n'apporterait rien -- entre deux appels reseau il ne se passe rien.
     """
-    import time as _t
-
-    if deadline is not None and _t.time() > deadline:
+    if deadline is not None and horloge() > deadline:
         raise BudgetEpuise()
 
 

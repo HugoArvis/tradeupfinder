@@ -680,6 +680,15 @@ réellement, `evaluate()` cotant les sorties une par une. Vérifié : 2 min
 demandées, 6 min tenues avec le contrôle en amont seul, **2 min** une fois
 l'échéance descendue dans le pricer.
 
+**Le budget se compte sans la mise en veille.** Mesuré le 19 octobre 2026 : un
+passage de 60 minutes lancé à 16:36, portable mis en veille, s'est arrêté au
+réveil le lendemain matin après 2 collections — « terminé en 1018 min ».
+`time.time()` avance pendant la veille ; `plan.horloge()`, qui lit
+`time.monotonic()`, s'arrête sous Linux, comme l'horloge des délais `systemd`.
+Toute échéance passée à `build_plan` se calcule avec elle, jamais avec
+`time.time()` : mélanger les deux horloges donnerait une échéance déjà passée,
+ou jamais atteinte.
+
 **Un seul balayage à la fois, tous lanceurs confondus** : `verrou.py` tient un
 fichier `data/balayage.lock` (PID et heure de prise), pris par `sweep` et par le
 balayage de l'application. Sans lui, l'application ne voyait pas un `sweep` —

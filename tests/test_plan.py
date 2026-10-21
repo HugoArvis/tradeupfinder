@@ -19,6 +19,7 @@ from tradeupfinder.generator import (
     options_from_listings,
 )
 from tradeupfinder.models import Rarity, Skin, Wear
+from tradeupfinder.plan import horloge
 
 SKIN = Skin(key="s", name="Arme", collection_id="c", rarity=Rarity.MIL_SPEC,
             min_float=0.0, max_float=1.0)
@@ -535,7 +536,6 @@ def test_le_budget_est_respecte_pendant_la_collecte_des_annonces():
     Sinon la tache planifiee, que Windows tue a 3 h, serait coupee en plein
     milieu -- donc sans rien enregistrer de la collection en cours.
     """
-    import time
 
     from tradeupfinder.db import SkinDatabase
     from tradeupfinder.models import Rarity
@@ -560,7 +560,7 @@ def test_le_budget_est_respecte_pendant_la_collecte_des_annonces():
     src = SourceQuiCompte()
     with pytest.raises(BudgetEpuise):
         build_plan(db, db.collection("c"), Rarity.MIL_SPEC, src,
-                   deadline=time.time() - 1)
+                   deadline=horloge() - 1)
     assert src.appels == 0, "aucune cotation ne doit partir apres l'echeance"
 
 
@@ -572,11 +572,10 @@ def test_sans_echeance_le_comportement_est_inchange():
 
 
 def test_une_echeance_future_ne_coupe_pas():
-    import time
 
     from tradeupfinder.plan import _verifie_budget
 
-    _verifie_budget(time.time() + 3600)
+    _verifie_budget(horloge() + 3600)
 
 
 def test_le_budget_coupe_aussi_la_valorisation_des_sorties():
@@ -586,7 +585,6 @@ def test_le_budget_coupe_aussi_la_valorisation_des_sorties():
     entrees -- ne suffisait pas : `evaluate()` cote chaque sortie une par une,
     et cette boucle-la echappait au budget.
     """
-    import time
 
     from tradeupfinder.fees import STEAM
     from tradeupfinder.plan import BudgetEpuise, CSFloatPricer
@@ -605,7 +603,7 @@ def test_le_budget_coupe_aussi_la_valorisation_des_sorties():
 
     marche = MarcheCompteur()
     p = CSFloatPricer(source=None, sell_source=marche, sell_fees=STEAM,
-                      deadline=time.time() - 1)
+                      deadline=horloge() - 1)
     with pytest.raises(BudgetEpuise):
         p.sell_net(SKIN, Wear.FACTORY_NEW)
     assert marche.appels == 0, "aucune cotation apres l'echeance"
@@ -827,3 +825,18 @@ def test_les_usures_de_sortie_inatteignables_ne_sont_pas_lues():
     _, src = _plan_sur_faux_carnet()
     assert src.lectures["Sortie (Battle-Scarred)"] == 0
     assert src.lectures["Sortie (Well-Worn)"] == 0
+
+
+def test_la_mise_en_veille_n_epuise_pas_le_budget(monkeypatch):
+    """Mesure le 19 octobre 2026 : un passage d'une heure, portable mis en
+    veille, s'est arrete au reveil "apres 1018 min" en ayant tourne un quart
+    d'heure. L'horloge murale avance pendant la veille, pas l'horloge des
+    budgets."""
+    import time as _t
+
+    from tradeupfinder.plan import _verifie_budget
+
+    echeance = horloge() + 60
+    reel = _t.time()
+    monkeypatch.setattr(_t, "time", lambda: reel + 17 * 3600)  # une nuit
+    _verifie_budget(echeance)  # ne doit rien lever
