@@ -375,6 +375,7 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     class FauxPlan:
         result = FauxResultat()
         collection = types.SimpleNamespace(name="C")
+        nom = "C"
         rarity = FauxRarete()
         options = (FauxOption(),)
         listings_examined = 10

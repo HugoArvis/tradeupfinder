@@ -840,3 +840,131 @@ def test_la_mise_en_veille_n_epuise_pas_le_budget(monkeypatch):
     reel = _t.time()
     monkeypatch.setattr(_t, "time", lambda: reel + 17 * 3600)  # une nuit
     _verifie_budget(echeance)  # ne doit rien lever
+
+
+# --- Deux collections ---------------------------------------------------------
+# Les contrats gagnants des guides publics melangent presque toujours une
+# collection principale et un "remplissage" : quelques entrees a bas float
+# d'une autre collection, qui font tomber la moyenne sous un palier.
+
+
+AUTRE = Skin(key="a", name="Autre", collection_id="d", rarity=Rarity.MIL_SPEC,
+             min_float=0.0, max_float=1.0)
+
+
+def test_la_selection_mixte_est_exacte():
+    """Comparee a l'enumeration de toutes les combinaisons, sur des carnets
+    tires au hasard : meme cout minimal, a chaque repartition et budget."""
+    import itertools
+    import random
+
+    from tradeupfinder.generator import cheapest_mixed_selection
+
+    hasard = random.Random(7)
+    for _ in range(40):
+        a = [opt(round(hasard.uniform(0.1, 3), 2), round(hasard.uniform(0, 0.6), 3))
+             for _ in range(7)]
+        b = [opt(round(hasard.uniform(0.1, 3), 2), round(hasard.uniform(0, 0.6), 3),
+                 skin=AUTRE) for _ in range(7)]
+        budget = hasard.uniform(0.3, 2.0)
+        for n_a in range(0, 6):
+            sel = cheapest_mixed_selection(a, b, n_a, budget, total=5)
+            meilleur = None
+            for ca in itertools.combinations(a, n_a):
+                for cb in itertools.combinations(b, 5 - n_a):
+                    if sum(o.normalized for o in ca + cb) <= budget + 1e-9:
+                        cout = sum(o.unit_cost for o in ca + cb)
+                        meilleur = cout if meilleur is None else min(meilleur, cout)
+            if meilleur is None:
+                assert sel is None
+            else:
+                assert sel is not None
+                assert sum(o.unit_cost for o in sel) == pytest.approx(meilleur)
+                assert sum(1 for o in sel if o.skin is SKIN) == n_a
+                assert sum(o.normalized for o in sel) <= budget + 1e-9
+
+
+def _carnet_mixte():
+    from collections import Counter
+
+    from tradeupfinder.db import SkinDatabase
+
+    db = SkinDatabase.from_dict({"version": "t", "collections": [
+        {"id": "c", "name": "Principale", "skins": [
+            {"key": "ci", "name": "Entree C", "rarity": "Mil-Spec Grade",
+             "min_float": 0.0, "max_float": 1.0},
+            {"key": "co", "name": "Sortie C", "rarity": "Restricted",
+             "min_float": 0.0, "max_float": 1.0}]},
+        {"id": "d", "name": "Remplissage", "skins": [
+            {"key": "di", "name": "Entree D", "rarity": "Mil-Spec Grade",
+             "min_float": 0.0, "max_float": 1.0},
+            {"key": "do", "name": "Sortie D", "rarity": "Restricted",
+             "min_float": 0.0, "max_float": 1.0}]},
+    ]})
+    carnet = {
+        # La principale n'existe qu'en Minimal Wear a 0,10 : seule, sa sortie
+        # tombe en Minimal Wear (12).
+        "Entree C (Minimal Wear)": [FakeListing(1.0, 0.10) for _ in range(10)],
+        # Le remplissage, a 0,01, fait tomber la moyenne sous 0,07.
+        "Entree D (Factory New)": [FakeListing(1.0, 0.01) for _ in range(10)],
+        "Sortie C (Factory New)": [FakeListing(30.0, 0.01)],
+        "Sortie C (Minimal Wear)": [FakeListing(12.0, 0.10)],
+        "Sortie D (Factory New)": [FakeListing(10.0, 0.01)],
+        "Sortie D (Minimal Wear)": [FakeListing(8.0, 0.10)],
+    }
+
+    class Source:
+        def __init__(self):
+            self.lectures = Counter()
+
+        def listings(self, nom, limit=30):
+            self.lectures[nom] += 1
+            return [FakeListing(l.price, l.float_value) for l in carnet.get(nom, [])]
+
+        def daily_sales(self, nom):
+            return None
+
+        def sales_history(self, nom):
+            return []
+
+    return db, Source()
+
+
+def test_le_remplissage_fait_passer_la_principale_un_palier_plus_haut():
+    from tradeupfinder.plan import build_plan, build_plan_mixte
+
+    db, src = _carnet_mixte()
+    mono = build_plan(db, db.collection("c"), Rarity.MIL_SPEC, src)
+    mixte = build_plan_mixte(db, db.collection("c"), db.collection("d"),
+                             Rarity.MIL_SPEC, src)
+
+    assert mixte is not None and mixte.remplissage is db.collection("d")
+    assert 1 <= mixte.n_principale < 10
+    # Les dix entrees respectent la repartition annoncee.
+    assert sum(1 for o in mixte.options if o.skin.collection_id == "c") == mixte.n_principale
+    # Et la principale sort en Factory New : le melange bat le contrat mono.
+    assert mixte.result.ev_net > mono.result.ev_net
+    assert "Principale + Remplissage" in mixte.nom
+
+
+def test_sans_gain_le_melange_rend_le_contrat_mono():
+    """La repartition 10/0 est testee dans le meme calcul : un remplissage
+    qui ne rapporte rien ne doit jamais etre impose."""
+    from tradeupfinder.plan import build_plan_mixte
+
+    db, src = _carnet_mixte()
+    # Plus aucune annonce pour les sorties du remplissage : chaque entree D
+    # coute 1 et ne rapporte rien, et la principale n'a pas besoin de son
+    # bas float pour rester ou elle est.
+    lire = src.listings
+    src.listings = lambda nom, limit=30: [] if nom.startswith("Sortie D") else lire(nom, limit)
+    src_c = db.collection("c")
+    # Principale a 0,01 : deja en Factory New, rien a gagner a melanger.
+    lire_c = src.listings
+    src.listings = lambda nom, limit=30: (
+        [FakeListing(1.0, 0.01) for _ in range(10)] if nom == "Entree C (Factory New)"
+        else [] if nom == "Entree C (Minimal Wear)" else lire_c(nom, limit))
+    mixte = build_plan_mixte(db, src_c, db.collection("d"), Rarity.MIL_SPEC, src)
+    assert mixte is not None
+    assert mixte.n_principale == 10 and mixte.remplissage is None
+    assert mixte.nom == "Principale"

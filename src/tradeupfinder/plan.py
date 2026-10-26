@@ -21,7 +21,13 @@ from dataclasses import dataclass, field
 from .db import SkinDatabase
 from .ev import InputItem, TradeUpResult, evaluate
 from .fees import STEAM, FeeModel
-from .generator import InputOption, cheapest_unique_selection, options_from_listings
+from .generator import (
+    InputOption,
+    cheapest_unique_selection,
+    combiner_fronts,
+    frontieres_uniques,
+    options_from_listings,
+)
 from .models import Collection, Rarity
 from .pricing.base import PriceSource, Quote
 from .pricing.csfloat import CSFloat
@@ -433,6 +439,18 @@ class Plan:
     # plan estime sur CSFloat ne se comparent pas : le premier compte en
     # monnaie Steam, le second en argent retirable.
     sell_market: str = "CSFloat"
+    # Contrat a deux collections : `collection` est la principale, celle dont
+    # on vise les sorties ; `remplissage` fournit le reste des dix entrees.
+    remplissage: Collection | None = None
+    n_principale: int = TRADEUP_INPUT_COUNT
+
+    @property
+    def nom(self) -> str:
+        """Le contrat tel qu'on le nomme : une collection, ou deux et leur part."""
+        if self.remplissage is None:
+            return self.collection.name
+        return (f"{self.collection.name} + {self.remplissage.name} "
+                f"({self.n_principale}/{TRADEUP_INPUT_COUNT - self.n_principale})")
 
     def basket_profitability(self, panier) -> float | None:
         """Profitabilite d'un panier suivant : meme EV, autre cout."""
@@ -790,6 +808,157 @@ def build_plan(
     return meilleur
 
 
+def _annonces_de(collection, rarity, source, listings_per_skin, deadline):
+    """Les annonces de toutes les entrees possibles d'une collection."""
+    options: list[InputOption] = []
+    examinees = 0
+    for skin in collection.by_rarity(rarity):
+        for wear in skin.available_wears():
+            _verifie_budget(deadline)
+            offres = source.listings(skin.market_hash_name(wear), limit=listings_per_skin)
+            examinees += len(offres)
+            options.extend(options_from_listings(skin, offres))
+    return options, examinees
+
+
+def build_plan_mixte(
+    db: SkinDatabase,
+    principale: Collection,
+    remplissage: Collection,
+    rarity: Rarity,
+    source: CSFloat,
+    *,
+    listings_per_skin: int = 30,
+    safety_margin: float = 0.05,
+    sell_fee: float = 0.02,
+    float_margin: float = 0.005,
+    deadline: float | None = None,
+) -> Plan | None:
+    """Le meilleur panier qui melange deux collections, sur annonces reelles.
+
+    Ce que font les guides publics, et que `build_plan` ne voit pas : quelques
+    entrees d'une autre collection, souvent a bas float, qui font tomber la
+    moyenne sous un palier pour que les sorties qui comptent sortent dans une
+    meilleure usure. CLAUDE.md jugeait les melanges rarement gagnants, mais
+    sur une mesure `scan` -- un prix par palier, un float suppose -- qui voit
+    mal precisement ce cas.
+
+    Chaque palier d'usure des sorties des DEUX collections est teste, avec
+    chaque repartition de 1 a 10 entrees principales (10 = le contrat mono,
+    pour comparer dans le meme calcul). Le panier de chaque couple est exact
+    (`combiner_fronts`). Revente estimee sur CSFloat.
+    """
+    out_p = principale.outcomes_for_input_rarity(rarity)
+    if not out_p:
+        return None
+    out_r = remplissage.outcomes_for_input_rarity(rarity)
+
+    opts_p, vues_p = _annonces_de(principale, rarity, source, listings_per_skin, deadline)
+    opts_r, vues_r = _annonces_de(remplissage, rarity, source, listings_per_skin, deadline)
+    if len(opts_p) + len(opts_r) < TRADEUP_INPUT_COUNT:
+        return None
+
+    pricer = CSFloatPricer(source, sell_fee=sell_fee, safety_margin=safety_margin,
+                           deadline=deadline)
+    outcomes_map = {principale.id: out_p, remplissage.id: out_r}
+    toutes_sorties = list(out_p) + list(out_r)
+    frontieres = wear_breakpoints(toutes_sorties)
+
+    meilleur: Plan | None = None
+    for hi in _points_a_tester(toutes_sorties):
+        _verifie_budget(deadline)
+        budget = (hi - max(float_margin, 1e-9)) * TRADEUP_INPUT_COUNT
+        fronts_p = frontieres_uniques(opts_p, TRADEUP_INPUT_COUNT, budget)
+        fronts_r = frontieres_uniques(opts_r, TRADEUP_INPUT_COUNT, budget)
+        for n in range(1, TRADEUP_INPUT_COUNT + 1):
+            selection = combiner_fronts(
+                fronts_p[n], fronts_r[TRADEUP_INPUT_COUNT - n], budget)
+            if selection is None:
+                continue
+            items = [InputItem(skin=o.skin, float_value=o.float_value,
+                               unit_cost=o.unit_cost) for o in selection]
+            atteint = sum(o.normalized for o in selection) / TRADEUP_INPUT_COUNT
+            result = evaluate(items, outcomes_map, pricer,
+                              cliff_distance=_distance_a_la_falaise(atteint, frontieres))
+            if meilleur is None or result.ev_profit > meilleur.result.ev_profit:
+                meilleur = Plan(
+                    result=result,
+                    options=tuple(selection),
+                    collection=principale,
+                    rarity=rarity,
+                    listings_examined=vues_p + vues_r,
+                    float_budget=budget,
+                    remplissage=remplissage if n < TRADEUP_INPUT_COUNT else None,
+                    n_principale=n,
+                    replis=pricer.replis,
+                    downgrade_net=_net_si_palier_rate(result, pricer),
+                    exit_value=_valeur_de_revente(selection, pricer, sell_fee),
+                    liquidity={o.name: pricer.sales_stats(o.name) for o in result.outcomes},
+                )
+
+    if meilleur is not None:
+        from dataclasses import replace
+
+        meilleur = replace(
+            meilleur,
+            deep_cost=_cout_mixte_en_profondeur(opts_p, opts_r, meilleur),
+            next_baskets=_paniers_mixtes_suivants(opts_p, opts_r, meilleur),
+        )
+    return meilleur
+
+
+def _selection_mixte(opts_p, opts_r, plan) -> list[InputOption] | None:
+    n = plan.n_principale
+    return combiner_fronts(
+        frontieres_uniques(opts_p, n, plan.float_budget)[n],
+        frontieres_uniques(opts_r, TRADEUP_INPUT_COUNT - n, plan.float_budget)[
+            TRADEUP_INPUT_COUNT - n],
+        plan.float_budget,
+    )
+
+
+def _sans_les_moins_cheres(options):
+    """Chaque objet prive de ses `PROFONDEUR_TESTEE` annonces les moins cheres."""
+    par_nom: dict[str, list[InputOption]] = {}
+    for o in options:
+        par_nom.setdefault(o.name, []).append(o)
+    reste = []
+    for lot in par_nom.values():
+        lot.sort(key=lambda o: o.unit_cost)
+        reste.extend(lot[PROFONDEUR_TESTEE:])
+    return reste
+
+
+def _cout_mixte_en_profondeur(opts_p, opts_r, plan) -> float | None:
+    """`_cout_en_profondeur` pour un melange : meme repartition, meme budget."""
+    sel = _selection_mixte(_sans_les_moins_cheres(opts_p),
+                           _sans_les_moins_cheres(opts_r), plan)
+    return None if sel is None else sum(o.unit_cost for o in sel)
+
+
+def _paniers_mixtes_suivants(opts_p, opts_r, plan):
+    """`_paniers_suivants` pour un melange : meme repartition, meme budget."""
+    def cle(o):
+        return o.listing_id or id(o)
+
+    prises = {cle(o) for o in plan.options}
+    reste_p = [o for o in opts_p if cle(o) not in prises]
+    reste_r = [o for o in opts_r if cle(o) not in prises]
+    paniers = []
+    while len(paniers) < PANIERS_MAX - 1:
+        sel = _selection_mixte(reste_p, reste_r, plan)
+        if sel is None:
+            break
+        prof = plan.basket_profitability(sel)
+        if prof is None or prof < 1.0:
+            break
+        paniers.append(tuple(sel))
+        prises = {cle(o) for o in sel}
+        reste_p = [o for o in reste_p if cle(o) not in prises]
+        reste_r = [o for o in reste_r if cle(o) not in prises]
+    return tuple(paniers)
+
+
 def nom_marche(sell_source: PriceSource | None) -> str:
     """Le marche de revente d'un plan, tel que le payload et la page le nomment.
 
@@ -1026,7 +1195,7 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
 
     lignes = plan.steam_order_lines()
     return {
-        "collection": plan.collection.name,
+        "collection": plan.nom,
         # Une meme collection donne un plan different par rarete : sans elle,
         # deux lignes de l'historique sont indiscernables.
         "rarity": plan.rarity.label,

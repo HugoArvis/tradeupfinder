@@ -312,6 +312,28 @@ profit +0,99 contre +0,97 et ROI 6,4 % contre 5,6 %, mais **pire cas 0,82 au
 lieu de 18,19** et P(gain) 90 % au lieu de 100 %. Soit 0,02 € d'espérance
 achetés au prix d'une perte de 16,40 € une fois sur dix.
 
+**Sur annonces réelles, un mélange peut transformer deux perdants en
+gagnant** — ce que la mesure `scan` ne pouvait pas voir, faute de floats
+réels. `plan --remplissage` (`build_plan_mixte`) teste chaque palier des
+sorties des deux collections et chaque répartition de 1 à 10 entrées
+principales, avec une sélection exacte (`combiner_fronts`). Mesuré le
+26 octobre 2026 sur les 15 paires de 6 collections Mil-Spec proches du point
+mort, 247 requêtes CSFloat :
+
+| paire | mono A / mono B | meilleur mélange | P(gain) |
+|---|---|---|---|
+| Boreal + 2018 Nuke | −0,05 / −0,05 € | **+0,52 €** (4/6), 106 % | 20 % |
+| Boreal + 2021 Mirage | −0,05 / −2,14 € | **+0,30 €** (7/3), 105 % | 30 % |
+| Achroma + Boreal | +0,09 / −0,05 € | +0,17 € (7/3), 110 % | 35 % |
+| 12 autres | — | mono, ou ±0,03 € | — |
+
+Trois paires sur quinze font mieux que leurs deux contrats mono, dont deux
+avec deux monos perdants. Mais les gains restent de quelques dizaines de
+centimes, à faible probabilité de gain (20 à 35 %), et aucun mélange ne passe
+les 115 % : le meilleur contrat du jour restait un mono (Ascent, 114 %,
+P(gain) 50 %). La règle « monotone, maximum en mono » tient à paliers fixes ;
+c'est exactement là où le remplissage change le palier qu'elle tombe.
+
 **`all_outcomes_profitable` prime sur le nombre de sorties** — trois issues
 toutes rentables valent mieux qu'une issue unique au gain marginal. D'où le
 classement : `scoring.sort_key` renvoie un **tuple** (probabilité puis gain pour

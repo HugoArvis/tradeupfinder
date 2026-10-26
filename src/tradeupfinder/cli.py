@@ -24,7 +24,7 @@ from .models import TRADEABLE_INPUT_RARITIES, Rarity, Wear
 from .pricing.cache import QuoteCache
 from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
-from .plan import BudgetEpuise, build_plan, horloge, plan_payload
+from .plan import BudgetEpuise, build_plan, build_plan_mixte, horloge, plan_payload
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .gold import GOLD_INPUT_COUNT, scan_crates
@@ -371,14 +371,23 @@ def cmd_plan(args) -> int:
         print(f"Collection introuvable : {args.collection!r}", file=sys.stderr)
         return 1
 
+    remplissage = None
+    if args.remplissage:
+        remplissage = db.find_collection(args.remplissage)
+        if remplissage is None:
+            print(f"Collection introuvable : {args.remplissage!r}", file=sys.stderr)
+            return 1
+
     print(f"Cle CSFloat {mask(key)} | {col.name} | {rarity.label}", file=sys.stderr)
     source = CSFloat(key, calls_per_minute=args.rate)
-    plan = build_plan(
-        db, col, rarity, source,
-        listings_per_skin=args.listings,
-        safety_margin=args.margin,
-        float_margin=args.float_margin,
-    )
+    reglages = dict(listings_per_skin=args.listings, safety_margin=args.margin,
+                    float_margin=args.float_margin)
+    if remplissage is not None:
+        # Deux collections : chaque repartition de 1 a 10 entrees principales,
+        # 10 compris -- le plan rendu peut donc rester mono s'il vaut mieux.
+        plan = build_plan_mixte(db, col, remplissage, rarity, source, **reglages)
+    else:
+        plan = build_plan(db, col, rarity, source, **reglages)
 
     if plan is None:
         print("Aucun panier realisable avec les offres actuellement en vente.")
@@ -393,7 +402,7 @@ def cmd_plan(args) -> int:
 
     # La rarete sur stdout, et pas seulement dans l'en-tete stderr : c'est ce
     # qu'on relit dans un fichier de sortie ou un copier-coller.
-    print(f"\n{col.name} [{plan.rarity.label} -> {plan.rarity.next_up.label}]"
+    print(f"\n{plan.nom} [{plan.rarity.label} -> {plan.rarity.next_up.label}]"
           f" -- {plan.listings_examined} offres examinees")
     print(f"Achat et revente sur CSFloat. Tous les montants sont en {devise}.\n")
     print("A ACHETER (offres reelles, floats exacts) :")
@@ -1759,6 +1768,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="panier concret depuis les offres reelles CSFloat")
     s.add_argument("collection")
     s.add_argument("--rarity", default="mil-spec", choices=sorted(RARITY_ALIASES))
+    s.add_argument("--remplissage", default=None, metavar="COLLECTION",
+                   help="seconde collection a melanger a la premiere (entrees "
+                        "de remplissage) ; toutes les repartitions sont testees")
     s.add_argument("--listings", type=int, default=30,
                    help="offres a examiner par objet (defaut 30)")
     s.add_argument("--margin", type=float, default=0.05,
