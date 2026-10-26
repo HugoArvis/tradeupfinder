@@ -241,14 +241,28 @@ def cheapest_unique_selection(
     if len(options) < count:
         return None
 
-    # frontier[k] = etats ayant deja retenu k objets.
+    frontier = frontieres_uniques(options, count, float_budget)
+    if not frontier[count]:
+        return None
+    return list(min(frontier[count], key=lambda s: s[1])[2])
+
+
+def frontieres_uniques(
+    options: Sequence[InputOption], count: int, float_budget: float
+) -> list[list[_State]]:
+    """Fronts de Pareto (float cumule, cout) pour 0..count objets distincts.
+
+    `frontieres[k]` liste les selections de k annonces non dominees : a float
+    cumule croissant, cout strictement decroissant. C'est le coeur de
+    `cheapest_unique_selection`, expose pour combiner deux collections.
+    """
     frontier: list[list[_State]] = [[] for _ in range(count + 1)]
     frontier[0] = [(0.0, 0.0, ())]
 
     for opt in options:
         # Parcours descendant : une offre ne peut pas se reutiliser dans le
         # meme passage.
-        for k in range(min(count - 1, count), -1, -1):
+        for k in range(count - 1, -1, -1):
             if not frontier[k]:
                 continue
             promoted: list[_State] = []
@@ -259,10 +273,58 @@ def cheapest_unique_selection(
                 promoted.append((nf, c_sum + opt.unit_cost, sel + (opt,)))
             if promoted:
                 frontier[k + 1] = _pareto_filter(frontier[k + 1] + promoted)
+    return frontier
 
-    if not frontier[count]:
+
+def cheapest_mixed_selection(
+    principale: Sequence[InputOption],
+    remplissage: Sequence[InputOption],
+    n_principale: int,
+    float_budget: float,
+    total: int = 10,
+) -> list[InputOption] | None:
+    """`n_principale` annonces d'une collection, le reste d'une autre, au
+    moindre cout sous le budget de float -- exactement.
+
+    Les fronts de chaque collection donnent, pour un nombre d'objets, tous les
+    compromis float/cout non domines. Sur un front, le cout decroit quand le
+    float cumule croit : pour chaque etat de la principale, le meilleur
+    complement est donc l'etat du remplissage au plus grand float qui tient
+    encore dans le budget restant.
+    """
+    n_rempl = total - n_principale
+    if n_principale < 0 or n_rempl < 0:
         return None
-    return list(min(frontier[count], key=lambda s: s[1])[2])
+    if len(principale) < n_principale or len(remplissage) < n_rempl:
+        return None
+    fa = frontieres_uniques(principale, n_principale, float_budget)[n_principale]
+    fb = frontieres_uniques(remplissage, n_rempl, float_budget)[n_rempl]
+    return combiner_fronts(fa, fb, float_budget)
+
+
+def combiner_fronts(
+    fa: list[_State], fb: list[_State], float_budget: float
+) -> list[InputOption] | None:
+    """Le couple d'etats (un par front) le moins cher sous le budget de float.
+
+    Sur un front, le cout decroit quand le float cumule croit : pour chaque
+    etat de `fa`, le meilleur complement est l'etat de `fb` au plus grand
+    float qui tient encore dans le budget restant.
+    """
+    if not fa or not fb:
+        return None
+    import bisect
+
+    floats_b = [st[0] for st in fb]  # croissants, couts decroissants
+    meilleur: tuple[float, tuple[InputOption, ...]] | None = None
+    for f_a, c_a, sel_a in fa:
+        i = bisect.bisect_right(floats_b, float_budget - f_a + EPS) - 1
+        if i < 0:
+            continue
+        cout = c_a + fb[i][1]
+        if meilleur is None or cout < meilleur[0] - EPS:
+            meilleur = (cout, sel_a + fb[i][2])
+    return None if meilleur is None else list(meilleur[1])
 
 
 def options_from_listings(

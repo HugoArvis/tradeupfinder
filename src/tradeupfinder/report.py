@@ -210,7 +210,7 @@ def render(plan: Plan, *, currency: str = "USD", rate: float = 1.0) -> str:
     return f"""<style>{_CSS}</style>
 <body data-generated="{now.isoformat()}">
 <div class="wrap">
-  <h1>{html.escape(plan.collection.name)}
+  <h1>{html.escape(plan.nom)}
     <span class="rarete">{html.escape(plan.rarity.label)}
       &rarr; {html.escape(plan.rarity.next_up.label)}</span></h1>
   <div class="sub">
