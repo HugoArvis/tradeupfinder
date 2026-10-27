@@ -970,6 +970,66 @@ def test_sans_gain_le_melange_rend_le_contrat_mono():
     assert mixte.nom == "Principale"
 
 
+# --- Melanges dans le balayage ---------------------------------------------------
+
+
+def test_la_source_memorisee_ne_fait_chaque_appel_qu_une_fois():
+    from tradeupfinder.plan import SourceMemorisee
+    from tradeupfinder.pricing.http import RateLimited
+
+    class Source:
+        appels = 0
+        refus = 1
+
+        def listings(self, nom, limit=30):
+            if self.refus:
+                self.refus -= 1
+                raise RateLimited("429")
+            self.appels += 1
+            return [nom]
+
+    brute = Source()
+    src = SourceMemorisee(brute)
+    # Un refus de quota n'est pas memorise : l'appel suivant est refait.
+    with pytest.raises(RateLimited):
+        src.listings("X")
+    assert src.listings("X") == ["X"] and src.listings("X") == ["X"]
+    assert brute.appels == 1
+
+
+def _plan_factice_mono(prof, profit):
+    import types
+
+    return types.SimpleNamespace(result=types.SimpleNamespace(
+        profitability=prof, ev_profit=profit))
+
+
+def test_un_melange_qui_bat_ses_deux_monos_est_retenu():
+    from tradeupfinder.plan import build_plan, melanges_gagnants
+
+    db, src = _carnet_mixte()
+    mono_c = build_plan(db, db.collection("c"), Rarity.MIL_SPEC, src)
+    candidats = [(db.collection("d"), _plan_factice_mono(1.0, -0.69))]
+    trouves = melanges_gagnants(db, db.collection("c"), mono_c, candidats,
+                                Rarity.MIL_SPEC, src)
+    assert len(trouves) == 1
+    assert trouves[0].remplissage is db.collection("d")
+    assert trouves[0].result.ev_profit > mono_c.result.ev_profit + 0.05
+
+
+def test_rien_n_est_essaye_loin_du_point_mort():
+    from tradeupfinder.plan import melanges_gagnants
+
+    db, src = _carnet_mixte()
+    candidats = [(db.collection("d"), _plan_factice_mono(1.0, 0.0))]
+    assert melanges_gagnants(db, db.collection("c"), _plan_factice_mono(0.80, -2.0),
+                             candidats, Rarity.MIL_SPEC, src) == []
+    # Et un candidat loin du point mort n'est pas essaye non plus.
+    assert melanges_gagnants(db, db.collection("c"), _plan_factice_mono(1.0, 0.0),
+                             [(db.collection("d"), _plan_factice_mono(0.5, -5))],
+                             Rarity.MIL_SPEC, src) == []
+    assert sum(src.lectures.values()) == 0
+
 # --- Valorisation aux ventes recentes -------------------------------------------
 # Une annonce est un prix DEMANDE. Quand les ventes recentes se sont faites plus
 # bas, la sortie vaut ce qui s'est vendu, pas ce qui est affiche.

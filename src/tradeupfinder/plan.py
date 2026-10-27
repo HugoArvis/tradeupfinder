@@ -823,6 +823,86 @@ def build_plan(
     return meilleur
 
 
+class SourceMemorisee:
+    """Une source CSFloat qui ne fait chaque appel qu'une fois par passage.
+
+    Un balayage lit les annonces de chaque collection pour son plan mono ;
+    garder ces lectures permet d'essayer ensuite des melanges entre
+    collections deja vues sans les relire -- seules leurs sorties encore
+    jamais cotees coutent du quota. Un refus de quota n'est pas memorise : il
+    remonte, et l'appel sera refait.
+    """
+
+    def __init__(self, source):
+        self._source = source
+        self._memoire: dict = {}
+
+    def _une_fois(self, cle, appel):
+        if cle not in self._memoire:
+            self._memoire[cle] = appel()
+        return self._memoire[cle]
+
+    def listings(self, name, limit=30):
+        return self._une_fois(("annonces", name, limit),
+                              lambda: self._source.listings(name, limit=limit))
+
+    def daily_sales(self, name, jours=7):
+        return self._une_fois(("jours", name, jours),
+                              lambda: self._source.daily_sales(name, jours=jours))
+
+    def sales_history(self, name):
+        return self._une_fois(("ventes", name),
+                              lambda: self._source.sales_history(name))
+
+    def __getattr__(self, attr):
+        return getattr(self._source, attr)
+
+
+#: Profitabilite a partir de laquelle une collection est essayee en melange.
+#: Mesure du 26 octobre 2026 : les melanges gagnants associaient des
+#: collections proches du point mort (96 % et 99,6 % en mono, par exemple).
+SEUIL_MELANGE = 0.95
+
+#: Gain minimal d'un melange sur le meilleur de ses deux contrats mono, en USD,
+#: pour etre retenu : en dessous, c'est le mono dilue.
+GAIN_MIN_MELANGE = 0.05
+
+
+def melanges_gagnants(db, collection, plan, candidats, rarity, source, *,
+                      deadline=None):
+    """Les melanges de `collection` avec des collections deja calculees qui
+    battent leurs deux contrats mono.
+
+    `candidats` : couples (collection, plan mono) vus plus tot dans le meme
+    passage. Rien n'est essaye si `plan` est loin du point mort. Un refus de
+    quota ou la fin du budget arretent les essais sans perdre les melanges
+    deja trouves : un melange est un bonus, pas le travail du passage.
+    """
+    from .pricing.http import RateLimited
+
+    if plan is None or plan.result.profitability < SEUIL_MELANGE:
+        return []
+    trouves = []
+    for autre, plan_autre in candidats:
+        if plan_autre is None or plan_autre.result.profitability < SEUIL_MELANGE:
+            continue
+        try:
+            mixte = build_plan_mixte(db, collection, autre, rarity, source,
+                                     deadline=deadline)
+        except (RateLimited, BudgetEpuise):
+            break
+        except Exception:  # noqa: BLE001 - un melange rate n'arrete rien
+            continue
+        if mixte is None or mixte.remplissage is None:
+            continue
+        if mixte.result.unpriced_probability > 0.02:
+            continue
+        meilleur_mono = max(plan.result.ev_profit, plan_autre.result.ev_profit)
+        if mixte.result.ev_profit > meilleur_mono + GAIN_MIN_MELANGE:
+            trouves.append(mixte)
+    return trouves
+
+
 def _annonces_de(collection, rarity, source, listings_per_skin, deadline):
     """Les annonces de toutes les entrees possibles d'une collection."""
     options: list[InputOption] = []

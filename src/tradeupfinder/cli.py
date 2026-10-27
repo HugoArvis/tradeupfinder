@@ -24,7 +24,15 @@ from .models import TRADEABLE_INPUT_RARITIES, Rarity, Wear
 from .pricing.cache import QuoteCache
 from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
-from .plan import BudgetEpuise, build_plan, build_plan_mixte, horloge, plan_payload
+from .plan import (
+    BudgetEpuise,
+    SourceMemorisee,
+    build_plan,
+    build_plan_mixte,
+    horloge,
+    melanges_gagnants,
+    plan_payload,
+)
 from .pricing.csfloat import CSFloat
 from .pricing.http import RateLimited
 from .gold import GOLD_INPUT_COUNT, scan_crates
@@ -1431,6 +1439,11 @@ def _balayer(args) -> int:
                          calls_per_minute=15, ttl_seconds=6 * 3600)
              if args.sell_market == "steam" else None)
     marche = "Steam" if steam is not None else "CSFloat"
+    if steam is None:
+        # Chaque annonce lue reste en memoire le temps du passage : les
+        # melanges entre collections deja vues ne relisent rien.
+        source = SourceMemorisee(source)
+    candidats_melange: list = []
 
     # CSFloat cote en USD, Steam dans la devise demandee. Sans conversion, le
     # cout est en dollars et la revente en euros : le rapport des deux n'est
@@ -1572,6 +1585,21 @@ def _balayer(args) -> int:
             alt += f"  [a -3 annonces : {plan.deep_profitability:.0%}]"
         print(f"  [{prof:>5.0%}] {col.name:<40} {marque} "
               f"({faits}/{len(cols)}){alt}{repli}", file=sys.stderr)
+
+        # Melanges avec les collections proches du point mort deja vues dans
+        # ce passage. Revente CSFloat seulement : c'est la que le plan mixte
+        # sait valoriser.
+        if steam is None:
+            for mixte in melanges_gagnants(db, col, plan, candidats_melange, rarity,
+                                           source, deadline=debut + limite):
+                p_mixte = _plan_payload(mixte, args.currency, usd_vers_devise)
+                journal.save_plan(p_mixte, rarity=args.rarity,
+                                  collection_id=f"{col.id}+{mixte.remplissage.id}")
+                if p_mixte["profitability"] >= 1.0:
+                    rentables += 1
+                print(f"  [{p_mixte['profitability']:>5.0%}] {mixte.nom}  << melange",
+                      file=sys.stderr)
+            candidats_melange.append((col, plan))
 
     duree = (horloge() - debut) / 60
     print()
