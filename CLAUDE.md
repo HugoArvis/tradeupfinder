@@ -266,6 +266,17 @@ substitut automatisable.
 des prix demandés, rien ne dit qu'ils se concluent. Retenir la moins chère
 annonce nue du palier.
 
+**Sur CSFloat, la sortie vaut le plus bas entre l'annonce et les ventes.**
+`_revaloriser_sur_ventes` plafonne, une fois le panier choisi, la valeur de
+chaque sortie à la médiane de ses ventes récentes — jamais à la hausse, et
+seulement à partir de **5 ventes observées** (`VENTES_MIN`), pour ne pas
+refaire l'erreur d'une médiane sur un volume de 1. Aucune requête de plus : ces
+ventes sont déjà lues pour la liquidité. La sélection n'est pas refaite, seul
+le chiffre annoncé devient plus prudent ; `Plan.sur_ventes` compte les sorties
+abaissées. Origine : le guide 2026 de slyk (« ajuster les prix de sortie aux
+ventes récentes, pas aux annonces »), et le contrat Overpass annoncé à 131 %
+puis 107 %, arrivé à l'équilibre.
+
 **Mais l'ignorer à l'ACHAT rend `scan` systématiquement optimiste**, et cette
 asymétrie est dangereuse : l'ignorer à la revente est prudent, l'ignorer à
 l'achat ne l'est pas. `build_options` retient le prix du palier tout en visant

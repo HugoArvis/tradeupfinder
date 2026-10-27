@@ -1441,6 +1441,11 @@ function carte(p, planId, archive) {
       +${(p.best_profit || 0).toFixed(2)}. Seule une chute des prix peut vous
       faire perdre, pas le tirage.">toutes les sorties rentables</span>`);
   }
+  if (p.valued_on_sales) {
+    marques.push(`<span class="tag" title="${p.valued_on_sales} sortie(s) se
+      sont vendues récemment moins cher que leur annonce la moins chère :
+      elles sont valorisées au prix de ces ventes.">valorisé sur les ventes</span>`);
+  }
   if (p.replis) {
     marques.push(`<span class="tag" title="${p.replis} sortie(s) sans prix
       Steam, valorisées sur CSFloat qui rend 17 à 37 % de moins. Le gain réel

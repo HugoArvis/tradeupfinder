@@ -418,6 +418,9 @@ def cmd_plan(args) -> int:
 
     print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
           f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
+    if plan.sur_ventes:
+        print(f"  {plan.sur_ventes} sortie(s) valorisee(s) a la mediane des ventes "
+              f"recentes, plus basse que l'annonce la moins chere.")
     if plan.next_baskets:
         print(f"\nREPETER MAINTENANT : {len(plan.next_baskets)} panier(s) de plus "
               f"avec les annonces restantes, meme contrainte de float.")

@@ -137,6 +137,8 @@ const __cas = [
    () => carte({ ...__plan, sell_market: 'CSFloat', cost_alt: null,
                  profitability_alt: null, order_budget: null,
                  order_discount: null, order_lines: null }, 'abc', false)],
+  ['carte, valorisee sur les ventes',
+   () => carte({ ...__plan, valued_on_sales: 2 }, 'abc', false)],
   ['carte, plan sans paniers suivants',
    () => carte({ ...__plan, next_baskets: undefined }, 'abc', false)],
   ['carte, aucun panier suivant',
