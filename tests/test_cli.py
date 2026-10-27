@@ -547,3 +547,45 @@ def test_sweep_ne_compte_pas_la_veille_dans_son_budget(monkeypatch, tmp_path):
     monkeypatch.setattr(_t, "time", lambda: debut + 3600 * next(bonds))
     code, appels, _ = _sweep(monkeypatch, tmp_path, "--max-minutes", "1")
     assert code == 0 and len(appels) == 1
+
+
+def test_sweep_enregistre_les_melanges_gagnants(monkeypatch, tmp_path):
+    """Deuxieme collection du passage : le melange avec la premiere est essaye
+    et, s'il gagne, enregistre comme un contrat a part."""
+    import sqlite3
+
+    from tradeupfinder.journal import Journal
+
+    faux_plan = types.SimpleNamespace(
+        result=types.SimpleNamespace(unpriced_probability=0.0, profitability=1.0,
+                                     ev_profit=0.1),
+        valorisation_de_repli=False, replis=0, alt_profitability=None,
+        fragile=False, deep_profitability=1.0)
+    essais = []
+
+    def melanges(db, col, plan, candidats, rarity, source, deadline=None):
+        essais.append([c.id for c, _ in candidats])
+        if not candidats:
+            return []
+        autre = candidats[0][0]
+        return [types.SimpleNamespace(nom=f"{col.name} + {autre.name} (6/4)",
+                                      remplissage=autre)]
+
+    chemin = tmp_path / "j.db"
+    monkeypatch.setattr(cli, "build_plan", lambda *a, **k: faux_plan)
+    monkeypatch.setattr(cli, "melanges_gagnants", melanges)
+    monkeypatch.setattr(cli, "_plan_payload",
+                        lambda plan, devise, taux: {"profitability": 1.05,
+                                                    "collection": getattr(plan, "nom", "x")})
+    monkeypatch.setattr(cli, "CSFloat", lambda *a, **k: mock.Mock(
+        usd_rate=lambda devise: 0.9))
+    monkeypatch.setattr(cli, "Journal", lambda: Journal(chemin))
+    monkeypatch.setattr(cli, "csfloat_api_key", lambda k: "cle")
+    code = cli.main(["sweep", "--rarity", "mil-spec", "--collections",
+                     "The Bank Collection", "The Dust 2 Collection"])
+
+    assert code == 10
+    assert essais[0] == [] and len(essais[1]) == 1
+    ids = [r[0] for r in sqlite3.connect(chemin).execute(
+        "SELECT collection_id FROM plans")]
+    assert len(ids) == 3 and sum("+" in i for i in ids) == 1

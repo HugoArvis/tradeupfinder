@@ -334,6 +334,16 @@ les 115 % : le meilleur contrat du jour restait un mono (Ascent, 114 %,
 P(gain) 50 %). La règle « monotone, maximum en mono » tient à paliers fixes ;
 c'est exactement là où le remplissage change le palier qu'elle tombe.
 
+D'où les mélanges dans `sweep`, au moindre coût de quota : chaque annonce lue
+reste en mémoire le temps du passage (`SourceMemorisee`), et une collection à
+95 % ou plus (`SEUIL_MELANGE`) est essayée avec celles du même passage qui le
+sont aussi (`melanges_gagnants`). Seules leurs sorties encore jamais cotées
+coûtent des requêtes. Un mélange n'est enregistré que s'il bat ses deux monos
+d'au moins 0,05 $ (`GAIN_MIN_MELANGE`), sous l'identifiant `a+b` : il ne
+compte pas comme collection calculée, et l'application l'affiche comme un
+contrat à part. Un refus de quota pendant les essais les arrête sans pause —
+le mono suivant la fera. Le balayage de l'application, lui, reste mono.
+
 **`all_outcomes_profitable` prime sur le nombre de sorties** — trois issues
 toutes rentables valent mieux qu'une issue unique au gain marginal. D'où le
 classement : `scoring.sort_key` renvoie un **tuple** (probabilité puis gain pour

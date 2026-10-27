@@ -75,6 +75,12 @@ n'y a rien à en faire.
   `schedule` sans option dit quand aura lieu le prochain passage et comment se
   sont terminés les derniers ; `schedule --remove` la retire.
 
+Le balayage planifié essaie aussi des **mélanges de deux collections** : quand
+deux collections du même passage sont proches du point mort, il cherche le
+meilleur panier qui mêle leurs entrées. Un mélange n'est gardé que s'il bat
+les deux contrats d'une seule collection ; il apparaît alors comme un contrat
+à part, nommé « A + B (6/4) » — 6 entrées de A, 4 de B.
+
 En haut, un bandeau résume la situation : la profitabilité de chaque contrat
 (barre hachurée quand le tirage peut faire perdre), les chances de gagner du
 meilleur, leur nombre et le meilleur gain.
