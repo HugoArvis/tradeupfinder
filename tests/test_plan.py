@@ -1029,3 +1029,60 @@ def test_rien_n_est_essaye_loin_du_point_mort():
                              [(db.collection("d"), _plan_factice_mono(0.5, -5))],
                              Rarity.MIL_SPEC, src) == []
     assert sum(src.lectures.values()) == 0
+
+# --- Valorisation aux ventes recentes -------------------------------------------
+# Une annonce est un prix DEMANDE. Quand les ventes recentes se sont faites plus
+# bas, la sortie vaut ce qui s'est vendu, pas ce qui est affiche.
+
+
+def _plan_avec_ventes(ventes):
+    from dataclasses import dataclass as _dc
+
+    from tradeupfinder.db import SkinDatabase
+    from tradeupfinder.plan import build_plan
+
+    @_dc
+    class Vente:
+        price: float
+        plain: bool = True
+
+    db = SkinDatabase.from_dict({"version": "t", "collections": [{
+        "id": "c", "name": "C", "skins": [
+            {"key": "i", "name": "Arme", "rarity": "Mil-Spec Grade",
+             "min_float": 0.0, "max_float": 1.0},
+            {"key": "o", "name": "Sortie", "rarity": "Restricted",
+             "min_float": 0.0, "max_float": 1.0}]}]})
+    carnet = {"Arme (Factory New)": [FakeListing(1.0, 0.02) for _ in range(10)],
+              "Sortie (Factory New)": [FakeListing(20.0, 0.01)]}
+
+    class Source:
+        def listings(self, nom, limit=30):
+            return carnet.get(nom, [])
+
+        def daily_sales(self, nom, jours=7):
+            return [{"ventes": 4}]
+
+        def sales_history(self, nom):
+            return [Vente(p) for p in ventes] if nom == "Sortie (Factory New)" else []
+
+    return build_plan(db, db.collection("c"), Rarity.MIL_SPEC, Source())
+
+
+def test_des_ventes_plus_basses_que_l_annonce_abaissent_la_valeur():
+    plan = _plan_avec_ventes([14.0, 15.0, 15.0, 16.0, 17.0])
+    assert plan.sur_ventes == 1
+    # 15 (mediane des ventes) au lieu de 20 (annonce), frais et marge deduits.
+    assert plan.result.ev_net == pytest.approx(15.0 * 0.98 * 0.95)
+
+
+def test_des_ventes_plus_hautes_ne_relevent_jamais_la_valeur():
+    plan = _plan_avec_ventes([25.0, 26.0, 27.0, 28.0, 29.0])
+    assert plan.sur_ventes == 0
+    assert plan.result.ev_net == pytest.approx(20.0 * 0.98 * 0.95)
+
+
+def test_trop_peu_de_ventes_ne_font_pas_le_prix():
+    """Une mediane sur une poignee de ventes, c'est une vente isolee."""
+    plan = _plan_avec_ventes([5.0, 5.0, 5.0])
+    assert plan.sur_ventes == 0
+    assert plan.result.ev_net == pytest.approx(20.0 * 0.98 * 0.95)

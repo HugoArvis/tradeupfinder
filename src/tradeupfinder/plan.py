@@ -131,6 +131,10 @@ class CSFloatPricer:
         # PRUDENT, pas exact, et l'afficher sans le dire serait mentir par
         # omission dans le bon sens.
         self.replis = 0
+        # Prix effectivement payes recemment, par sortie, une fois connus. La
+        # valorisation retient alors le plus bas entre eux et l'annonce la
+        # moins chere : voir `_revaloriser_sur_ventes`.
+        self.prix_vendus: dict[str, float] = {}
         # Echeance du passage. `evaluate()` cote les sorties une par une, et
         # une collection a plus de cent sorties : sans ce controle ICI, le
         # budget ne pouvait pas etre tenu, quel que soit le controle en amont.
@@ -205,7 +209,12 @@ class CSFloatPricer:
         book = self._listings(name)
         if not book:
             return None
-        return min(prix for _, prix in book)
+        return self._plafonne_aux_ventes(name, min(prix for _, prix in book))
+
+    def _plafonne_aux_ventes(self, name: str, prix: float) -> float:
+        """Le plus bas entre l'annonce et ce qui s'est vraiment vendu."""
+        vendu = self.prix_vendus.get(name)
+        return prix if vendu is None else min(prix, vendu)
 
     def _quote_de_vente(self, name: str) -> Quote | None:
         """Cotation du marche de REVENTE, gardee en memoire.
@@ -302,6 +311,7 @@ class CSFloatPricer:
         p = self._lowest(name)
         if p is None:
             return None
+        p = self._plafonne_aux_ventes(name, p)
         return p * (1 - self.sell_fee) * (1 - self.safety_margin)
 
     def buy_cost(self, skin, wear, stattrak=False) -> float | None:
@@ -337,9 +347,10 @@ class CSFloatPricer:
         un contrat annonce a +0.37 s'est solde par -0.02, faute d'avoir vendu au
         prix du marche.
 
-        Le prix median des ventes n'entre PAS dans la valorisation : il est
-        souvent superieur au prix demande le plus bas, donc l'utiliser rendrait
-        le modele plus optimiste. Il sert a informer, pas a calculer.
+        Le prix median des ventes ne remplace pas l'annonce : il lui est souvent
+        superieur, et le prendre seul rendrait le modele plus optimiste. Il ne
+        sert qu'a la PLAFONNER quand les ventes se sont faites plus bas (voir
+        `_revaloriser_sur_ventes`) -- le chiffre ne peut que baisser.
         """
         if self.sell_source is not None:
             return self._stats_du_marche_de_vente(name)
@@ -390,6 +401,9 @@ class Plan:
     # Un plan qui en contient est PRUDENT, pas exact : la revente reelle sur
     # Steam rapporterait 17 a 37 % de plus.
     replis: int = 0
+
+    # Sorties dont la valeur a ete abaissee aux prix des ventes recentes.
+    sur_ventes: int = 0
 
     # Cout du MEME panier achete sur le marche de revente (Steam) au lieu du
     # marche d'achat (CSFloat). None si un prix manque.
@@ -793,6 +807,7 @@ def build_plan(
                 },
             )
 
+    meilleur = _revaloriser_sur_ventes(meilleur, pricer, outcomes_map)
     if meilleur is not None:
         from dataclasses import replace
 
@@ -976,6 +991,7 @@ def build_plan_mixte(
                     liquidity={o.name: pricer.sales_stats(o.name) for o in result.outcomes},
                 )
 
+    meilleur = _revaloriser_sur_ventes(meilleur, pricer, outcomes_map)
     if meilleur is not None:
         from dataclasses import replace
 
@@ -1037,6 +1053,50 @@ def _paniers_mixtes_suivants(opts_p, opts_r, plan):
         reste_p = [o for o in reste_p if cle(o) not in prises]
         reste_r = [o for o in reste_r if cle(o) not in prises]
     return tuple(paniers)
+
+
+#: Ventes observees a partir desquelles leur mediane est credible. En dessous,
+#: une vente isolee fait le prix : le projet a deja retenu une mediane sur un
+#: volume de 1 (CLAUDE.md).
+VENTES_MIN = 5
+
+
+def _revaloriser_sur_ventes(plan, pricer, outcomes_map):
+    """Abaisse la valeur des sorties a ce qui s'est vraiment vendu.
+
+    Le panier est choisi sur la moins chere annonce de chaque sortie. Mais une
+    annonce est un prix DEMANDE : quand les ventes recentes se sont faites
+    plus bas, c'est elles qu'il faut croire. Mesure sur Overpass 2024 : annonce
+    a 131 % puis 107 %, contrat a l'equilibre a l'arrivee.
+
+    Seulement vers le bas, et sans requete de plus : les ventes de chaque
+    sortie du panier sont deja lues pour la liquidite. La selection n'est pas
+    refaite ; seul le chiffre annonce devient plus prudent.
+    """
+    if plan is None or pricer.sell_source is not None:
+        return plan
+    from dataclasses import replace
+
+    abaisses = 0
+    for o in plan.result.outcomes:
+        st = (plan.liquidity or {}).get(o.name) or pricer.sales_stats(o.name)
+        if not st or not st.get("prix_median"):
+            continue
+        if st.get("ventes_observees", 0) < VENTES_MIN:
+            continue
+        pricer.prix_vendus[o.name] = st["prix_median"]
+        bas = pricer._lowest(o.name)
+        if bas is not None and st["prix_median"] < bas - 1e-9:
+            abaisses += 1
+    if not abaisses:
+        return plan
+
+    items = [InputItem(skin=o.skin, float_value=o.float_value, unit_cost=o.unit_cost)
+             for o in plan.options]
+    result = evaluate(items, outcomes_map, pricer,
+                      cliff_distance=plan.result.cliff_distance)
+    return replace(plan, result=result, sur_ventes=abaisses,
+                   downgrade_net=_net_si_palier_rate(result, pricer))
 
 
 def nom_marche(sell_source: PriceSource | None) -> str:
@@ -1309,6 +1369,8 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         "cost_deep": opt(plan.deep_cost),
         "profitability_deep": arrondi(plan.deep_profitability),
         "fragile": plan.fragile,
+        # Sorties valorisees aux ventes recentes, plus basses que l'annonce.
+        "valued_on_sales": plan.sur_ventes,
         # Les paniers suivants, faisables tout de suite avec les annonces
         # restantes : combien de contrats le carnet permet en parallele.
         "next_baskets": [

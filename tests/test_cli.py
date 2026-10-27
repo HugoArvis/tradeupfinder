@@ -391,6 +391,7 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
         deep_profitability = 12.0 / 11.0
         fragile = False
         sell_market = "Steam"
+        sur_ventes = 0
         # Un panier suivant de dix options a 1 USD : 10 USD.
         next_baskets = (tuple(FauxOption() for _ in range(10)),)
         float_subi_compatible = True
