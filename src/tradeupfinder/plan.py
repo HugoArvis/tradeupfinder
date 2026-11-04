@@ -31,6 +31,7 @@ from .generator import (
 from .models import Collection, Rarity
 from .pricing.base import PriceSource, Quote
 from .pricing.csfloat import CSFloat
+from .simulate import contracts_for_significance
 from .wear import TRADEUP_INPUT_COUNT, wear_breakpoints
 
 log = logging.getLogger(__name__)
@@ -1055,6 +1056,12 @@ def _paniers_mixtes_suivants(opts_p, opts_r, plan):
     return tuple(paniers)
 
 
+#: Probabilite de gain sous laquelle un plan est signale. Guide 2026 de slyk :
+#: "au moins 30 % de chances de gain" -- en dessous, tout repose sur une issue
+#: rare, et une serie de dix echecs n'a rien d'improbable.
+CHANCES_MIN = 0.30
+
+
 #: Ventes observees a partir desquelles leur mediane est credible. En dessous,
 #: une vente isolee fait le prix : le projet a deja retenu une mediane sur un
 #: volume de 1 (CLAUDE.md).
@@ -1355,6 +1362,12 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # Convention des guides : 1.0 = point mort, pas le profit.
         "profitability": round(r.profitability, 4),
         "win_probability": round(r.profit_probability, 4),
+        # Le seuil se juge ici : une constante recopiee dans le JavaScript
+        # finit par diverger, ou disparaitre (SEUIL_PROFITABLE, CLAUDE.md).
+        "low_win_chance": r.profit_probability < CHANCES_MIN,
+        # Combien de contrats pour que l'avantage se distingue du hasard
+        # (95 %). None si le contrat n'a pas d'avantage.
+        "repetitions": contracts_for_significance(r),
         "outcomes_count": r.distinct_outcomes,
         "stdev": c(r.stdev),
         "avg_float": round(r.avg_input_float, 5),

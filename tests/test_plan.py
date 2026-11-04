@@ -1086,3 +1086,35 @@ def test_trop_peu_de_ventes_ne_font_pas_le_prix():
     plan = _plan_avec_ventes([5.0, 5.0, 5.0])
     assert plan.sur_ventes == 0
     assert plan.result.ev_net == pytest.approx(20.0 * 0.98 * 0.95)
+
+
+
+def test_un_plan_a_issue_rare_est_signale():
+    """Une issue gagnante a 20 %, une perdante a 80 % : le payload le signale,
+    et dit combien de contrats il faudrait pour que l'avantage se voie. C'est
+    lui, pas le JavaScript, qui porte le seuil."""
+    from tradeupfinder.ev import InputItem, Outcome, TradeUpResult
+    from tradeupfinder.plan import Plan, plan_payload
+
+    sortie = Skin(key="o", name="Sortie", collection_id="c",
+                  rarity=Rarity.RESTRICTED, min_float=0.0, max_float=1.0)
+    options = tuple(opt(1.0, 0.05) for _ in range(10))
+    result = TradeUpResult(
+        outcomes=(
+            Outcome(skin=sortie, float_value=0.05, wear=Wear.FACTORY_NEW,
+                    probability=0.2, net_value=60.0, priced=True),
+            Outcome(skin=sortie, float_value=0.05, wear=Wear.MINIMAL_WEAR,
+                    probability=0.8, net_value=1.0, priced=True),
+        ),
+        inputs=tuple(InputItem(o.skin, o.float_value, o.unit_cost) for o in options),
+        cost=10.0, avg_input_float=0.05, avg_normalized=0.05, stattrak=False,
+        unpriced_probability=0.0, cliff_distance=0.01,
+    )
+    from tradeupfinder.models import Collection
+
+    plan = Plan(result=result, options=options, listings_examined=10,
+                collection=Collection(id="c", name="C", skins=(SKIN, sortie)))
+    d = plan_payload(plan, "USD")
+    assert result.profit_probability == pytest.approx(0.2)
+    assert d["low_win_chance"] is True
+    assert d["repetitions"] > 10

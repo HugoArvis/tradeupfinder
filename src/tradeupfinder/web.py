@@ -1424,6 +1424,12 @@ function carte(p, planId, archive) {
       point mort. Les annonces retenues sont les moins chères, donc les
       premières achetées par quiconque fait le même calcul.</div>`);
   }
+  if (p.low_win_chance) {
+    alertes.push(`<div class="warn"><b>Moins de 30 % de chances de gain.</b>
+      Le gain moyen repose sur une issue rare : une série d'échecs est
+      probable avant de la tirer. Ne le faire que répété, et avec une mise
+      que vous acceptez de perdre.</div>`);
+  }
   if (!p.all_profitable && p.worst_profit !== null &&
       p.worst_profit !== undefined) {
     alertes.push(`<div class="warn"><b>Le tirage peut vous faire perdre :</b>
@@ -1473,6 +1479,9 @@ function carte(p, planId, archive) {
       <span>gain <b class="pos">+${p.profit.toFixed(2)}</b></span>
       <span>chances de gagner
         <b>${((p.win_probability || 0) * 100).toFixed(0)}%</b></span>
+      ${p.repetitions ? `<span title="Nombre de contrats pour que l'avantage
+        se distingue du hasard (95 %). Un seul contrat reste un tirage.">à
+        répéter <b>~${p.repetitions}×</b></span>` : ''}
     </div>
     ${voies(p)}
     ${alertes.join('')}
