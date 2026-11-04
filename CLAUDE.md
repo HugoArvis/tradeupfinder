@@ -287,6 +287,19 @@ d'une revente pressée dépasse les ~8 % mesurés —, il est annoncé. Une sort
 improbable n'est pas signalée, une sortie sans données de ventes non plus :
 inconnu n'est pas lent.
 
+**Un prix qui vient de flamber retombe.** `/history/{nom}/graph` rend tout
+l'historique, du jour le plus récent au plus ancien (1 989 jours pour l'AK-47
+Redline) : lire 30 jours plutôt que 7 ne coûte rien. Mesuré le
+4 novembre 2026 sur 16 sorties de plans récents, en rejouant 6 062 dates : le
+rapport des 3 derniers jours de vente aux jours 8 à 30 vaut −1,6 % en médiane,
+et dix jours plus tard le prix a bougé de **−0,8 %** sans hausse, **−7 %**
+après une hausse de 15 à 25 %, **−23 %** au-delà. D'où `HAUSSE_MAX` (15 %),
+`Plan.sorties_en_hausse`, l'alerte « Prix gonflé » et `[PRIX GONFLE xN]`.
+Deux pièges : `avg_price` mélange ventes stickées et nues — une moyenne
+journalière isolée double d'un jour à l'autre, d'où des **médianes** de jours
+(`hausse_recente`) ; et les « jours » sont ceux qui ont eu des ventes, pas le
+calendrier.
+
 **Mais l'ignorer à l'ACHAT rend `scan` systématiquement optimiste**, et cette
 asymétrie est dangereuse : l'ignorer à la revente est prudent, l'ignorer à
 l'achat ne l'est pas. `build_options` retient le prix du palier tout en visant

@@ -1149,3 +1149,68 @@ def test_seules_les_sorties_probables_et_lentes_sont_signalees():
                            "Rare (Factory New)": {"ventes_jour": 0},
                            "Inconnue (Factory New)": None})
     assert plan.sorties_peu_liquides == [("Lente (Factory New)", 0)]
+
+
+def _jours(prix):
+    return [{"jour": "", "ventes": 4, "prix_moyen": p} for p in prix]
+
+
+def test_la_hausse_compare_trois_jours_a_la_reference_en_medianes():
+    from tradeupfinder.plan import hausse_recente
+
+    # 3 jours recents a 1,3 (dont un aberrant), 4 jours tampon, reference a 1,0.
+    jours = _jours([1.3, 9.0, 1.3] + [5.0] * 4 + [1.0] * 20 + [7.0])
+    assert hausse_recente(jours) == pytest.approx(0.3)
+    # Un jour aberrant ne fait pas une hausse : la mediane l'ignore.
+    assert hausse_recente(_jours([9.0, 1.0, 1.0] + [1.0] * 20)) == pytest.approx(0.0)
+    # Trop peu d'historique : on ne sait pas, on ne signale rien.
+    assert hausse_recente(_jours([2.0] * 3 + [1.0] * 10)) is None
+
+
+def test_les_ventes_sont_lues_sur_trente_jours_et_le_volume_sur_sept():
+    from tradeupfinder.plan import CSFloatPricer
+
+    class Source:
+        demande = None
+
+        def daily_sales(self, nom, jours=7):
+            Source.demande = jours
+            return [{"jour": "", "ventes": 10 if i < 7 else 0, "prix_moyen": 1.0}
+                    for i in range(jours)]
+
+        def sales_history(self, nom):
+            return []
+
+    stats = CSFloatPricer(source=Source(), safety_margin=0.0).sales_stats("X")
+    assert Source.demande == 30
+    assert stats["ventes_jour"] == 10
+    assert stats["hausse"] == pytest.approx(0.0)
+
+
+def test_seules_les_sorties_probables_en_hausse_sont_signalees():
+    from tradeupfinder.ev import InputItem, Outcome, TradeUpResult
+    from tradeupfinder.models import Collection
+    from tradeupfinder.plan import Plan
+
+    def sortie(cle, nom):
+        return Skin(key=cle, name=nom, collection_id="c", rarity=Rarity.RESTRICTED,
+                    min_float=0.0, max_float=1.0)
+
+    s = [sortie(k, n) for k, n in (("a", "Gonflee"), ("b", "Stable"),
+                                   ("c", "Rare"), ("d", "Neuve"))]
+    issues = tuple(Outcome(skin=x, float_value=0.05, wear=Wear.FACTORY_NEW,
+                           probability=p, net_value=5.0, priced=True)
+                   for x, p in zip(s, (0.3, 0.3, 0.05, 0.35)))
+    options = tuple(opt(1.0, 0.05) for _ in range(10))
+    result = TradeUpResult(
+        outcomes=issues,
+        inputs=tuple(InputItem(o.skin, o.float_value, o.unit_cost) for o in options),
+        cost=10.0, avg_input_float=0.05, avg_normalized=0.05, stattrak=False,
+        unpriced_probability=0.0, cliff_distance=0.01)
+    plan = Plan(result=result, options=options, listings_examined=10,
+                collection=Collection(id="c", name="C", skins=(SKIN,)),
+                liquidity={"Gonflee (Factory New)": {"ventes_jour": 5, "hausse": 0.3},
+                           "Stable (Factory New)": {"ventes_jour": 5, "hausse": 0.1},
+                           "Rare (Factory New)": {"ventes_jour": 5, "hausse": 0.9},
+                           "Neuve (Factory New)": {"ventes_jour": 5, "hausse": None}})
+    assert plan.sorties_en_hausse == [("Gonflee (Factory New)", 0.3)]

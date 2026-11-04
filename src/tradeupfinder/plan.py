@@ -358,7 +358,9 @@ class CSFloatPricer:
         if name in self._stats:
             return self._stats[name]
         try:
-            jours = self.source.daily_sales(name, jours=7)
+            # Trente jours pour la tendance : la reponse porte deja tout
+            # l'historique, en lire plus ne coute aucune requete.
+            jours = self.source.daily_sales(name, jours=JOURS_TENDANCE)
             ventes = [v.price for v in self.source.sales_history(name) if v.plain]
         except Exception:  # noqa: BLE001 - la liquidite est un complement
             self._stats[name] = None
@@ -367,11 +369,12 @@ class CSFloatPricer:
         if not jours:
             self._stats[name] = None
             return None
-        recents = [j["ventes"] for j in jours]
+        recents = [j["ventes"] for j in jours[:7]]
         self._stats[name] = {
             "ventes_jour": round(sum(recents) / len(recents)),
             "prix_median": (sorted(ventes)[len(ventes) // 2] if ventes else None),
             "ventes_observees": len(ventes),
+            "hausse": hausse_recente(jours),
         }
         return self._stats[name]
 
@@ -631,6 +634,28 @@ class Plan:
             if st.get("ventes_jour", 0) < VENTES_JOUR_MIN:
                 lentes.append((o.name, st.get("ventes_jour", 0)))
         return lentes
+
+    @property
+    def sorties_en_hausse(self) -> list[tuple[str, float]]:
+        """Les sorties PROBABLES dont le prix vient de flamber.
+
+        Guide de slyk, erreur n. 6 : un contrat bati sur une sortie qui vient
+        de monter passe pour rentable, puis le prix retombe. Mesure du
+        4 novembre 2026 sur 16 sorties de plans recents, 6 062 dates
+        rejouees : au-dela de +15 % (`HAUSSE_MAX`), le prix a perdu 7 % en
+        mediane dix jours plus tard, et 23 % au-dela de +25 % ; -0,8 % sans
+        hausse. Signale, pas corrige : la rechute est une tendance, pas une
+        certitude.
+        """
+        hausses = []
+        for o in self.result.outcomes:
+            st = (self.liquidity or {}).get(o.name)
+            if not st or o.probability < PROBA_SORTIE_SIGNIFICATIVE:
+                continue
+            h = st.get("hausse")
+            if h is not None and h > HAUSSE_MAX:
+                hausses.append((o.name, h))
+        return hausses
 
     # --- Ce qui compte vraiment : le pire cas couvre-t-il la mise ? ---
 
@@ -1081,6 +1106,31 @@ VENTES_JOUR_MIN = 1
 #: Probabilite a partir de laquelle une sortie compte pour la liquidite.
 PROBA_SORTIE_SIGNIFICATIVE = 0.10
 
+#: Jours d'historique lus pour la tendance (du plus recent au plus ancien).
+JOURS_TENDANCE = 30
+
+#: Hausse recente au-dela de laquelle une sortie est dite gonflee. Mesure du
+#: 4 novembre 2026 (`Plan.sorties_en_hausse`) : c'est a partir de la que la
+#: rechute a dix jours mange la moitie d'une marge de 115 %.
+HAUSSE_MAX = 0.15
+
+
+def hausse_recente(jours: list[dict]) -> float | None:
+    """Variation du prix des 3 derniers jours de vente sur les jours 8 a 30.
+
+    Des MEDIANES de moyennes journalieres : `avg_price` melange ventes
+    stickees et nues, et une moyenne isolee double d'un jour a l'autre (AK-47
+    Redline, 40 puis 77 $). Les jours sont ceux qui ont eu des ventes, du plus
+    recent au plus ancien. None sans assez d'historique.
+    """
+    prix = [j["prix_moyen"] for j in jours if j.get("prix_moyen")]
+    if len(prix) < 14:
+        return None
+    recent = sorted(prix[:3])[1]
+    ref = sorted(prix[7:30])
+    ref = ref[len(ref) // 2]
+    return recent / ref - 1 if ref > 0 else None
+
 
 #: Probabilite de gain sous laquelle un plan est signale. Guide 2026 de slyk :
 #: "au moins 30 % de chances de gain" -- en dessous, tout repose sur une issue
@@ -1397,6 +1447,9 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # Sorties probables qui se vendent moins d'une fois par jour.
         "illiquid_outcomes": [{"name": n, "per_day": v}
                               for n, v in plan.sorties_peu_liquides],
+        # Sorties probables dont le prix vient de flamber (ratio, 0.2 = +20 %).
+        "rising_outcomes": [{"name": n, "rise": round(h, 3)}
+                            for n, h in plan.sorties_en_hausse],
         "outcomes_count": r.distinct_outcomes,
         "stdev": c(r.stdev),
         "avg_float": round(r.avg_input_float, 5),

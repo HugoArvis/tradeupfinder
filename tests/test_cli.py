@@ -393,6 +393,7 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
         sell_market = "Steam"
         sur_ventes = 0
         sorties_peu_liquides = ()
+        sorties_en_hausse = ()
         # Un panier suivant de dix options a 1 USD : 10 USD.
         next_baskets = (tuple(FauxOption() for _ in range(10)),)
         float_subi_compatible = True
@@ -566,7 +567,7 @@ def test_sweep_enregistre_les_melanges_gagnants(monkeypatch, tmp_path):
         result=types.SimpleNamespace(unpriced_probability=0.0, profitability=1.0,
                                      ev_profit=0.1),
         valorisation_de_repli=False, replis=0, alt_profitability=None,
-        fragile=False, deep_profitability=1.0, sorties_peu_liquides=())
+        fragile=False, deep_profitability=1.0, sorties_peu_liquides=(), sorties_en_hausse=())
     essais = []
 
     def melanges(db, col, plan, candidats, rarity, source, deadline=None):

@@ -432,6 +432,9 @@ def cmd_plan(args) -> int:
           + (f" ; avantage visible apres ~{n_rep} contrats." if n_rep else "."))
     for nom_lent, par_jour in plan.sorties_peu_liquides:
         print(f"  REVENTE LENTE : {nom_lent} ({par_jour} vente/jour sur CSFloat)")
+    for nom_haut, hausse in plan.sorties_en_hausse:
+        print(f"  PRIX GONFLE : {nom_haut} ({hausse:+.0%} sur 3 jours) -- au-dela "
+              f"de +15 %, le prix a perdu 7 % en mediane dix jours plus tard.")
     if r.profit_probability < CHANCES_MIN:
         print("  ATTENTION : moins de 30 % de chances de gain -- le gain moyen "
               "repose sur une issue rare.")
@@ -1590,6 +1593,8 @@ def _balayer(args) -> int:
                if plan.alt_profitability is not None else "")
         if plan.sorties_peu_liquides:
             alt += f"  [REVENTE LENTE x{len(plan.sorties_peu_liquides)}]"
+        if plan.sorties_en_hausse:
+            alt += f"  [PRIX GONFLE x{len(plan.sorties_en_hausse)}]"
         if plan.fragile:
             alt += "  [FRAGILE : ne tient qu'en arrivant premier]"
         elif plan.deep_profitability is not None:

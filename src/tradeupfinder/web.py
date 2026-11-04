@@ -1430,6 +1430,12 @@ function carte(p, planId, archive) {
       Une sortie qui se vend rarement oblige à baisser son prix pour partir :
       autour de 18 % de décote, le gain disparaît.</div>`);
   }
+  if ((p.rising_outcomes || []).length) {
+    alertes.push(`<div class="warn"><b>Prix gonflé :</b>
+      ${p.rising_outcomes.map(o => `${o.name} (+${Math.round(o.rise * 100)} % sur 3 jours)`).join(', ')}.
+      Après une hausse de plus de 15 %, le prix a perdu 7 % en médiane dix jours
+      plus tard — le temps d’un contrat.</div>`);
+  }
   if (p.low_win_chance) {
     alertes.push(`<div class="warn"><b>Moins de 30 % de chances de gain.</b>
       Le gain moyen repose sur une issue rare : une série d'échecs est
