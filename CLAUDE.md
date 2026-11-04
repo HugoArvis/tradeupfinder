@@ -451,6 +451,17 @@ Trois enseignements :
   contrat ne serait jamais complet, sans aucun message. Après toute
   annulation, vérifier la quantité restante.
 
+**La Nova était étroite par erreur de réglage, pas par nécessité.** Les deux
+plafonds calculés à la main (0,308 et 0,514) valent le même float
+**normalisé**, 0,514 : c'est lui que le contrat contraint, pas l'usure. Or
+l'ordre Nova était posé sur le nom de marché Battle-Scarred, donc à partir de
+0,45 — un huitième du palier. Le même contrat acceptait tout float de 0 à
+0,514, Field-Tested et Well-Worn compris. `Plan.csfloat_order_rules` donne
+donc, par skin de la rareté, `[min_float, min + plafond × span]` toutes
+usures confondues, un prix unique et une règle en OU : en mono-collection,
+toute entrée sous le plafond pèse pareil dans l'EV. Aucune règle en mélange,
+où les entrées des deux collections ne pèsent pas pareil.
+
 Le filtre a aussi amené les dix floats sous le plan (normalisé 0,42 contre
 0,51) : les sorties passent du Well-Worn visé au **Field-Tested**. Sans rien y
 gagner : le 17 octobre, les deux paliers valaient le même prix sur CSFloat

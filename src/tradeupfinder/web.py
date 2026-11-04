@@ -1500,6 +1500,7 @@ function carte(p, planId, archive) {
     ${detailAnnonces(p)}
     ${detailPaniersSuivants(p)}
     ${detailOrdres(p)}
+    ${detailOrdreCsfloat(p)}
     <details>
       <summary>Ce que le contrat peut sortir
         (${p.outcomes.length} issue${p.outcomes.length > 1 ? 's' : ''})</summary>
@@ -1549,9 +1550,10 @@ function voies(p) {
       <td class="num">${p.net.toFixed(2)}</td>
       <td class="num">point mort</td>
       <td class="muted libre">au plus <b>${plafond.toFixed(2)}</b> par entrée,
-        au-delà le contrat ne rapporte plus · filtre de float à régler pour
-        garder la sortie au même palier · répétable, délai de remplissage en
-        cours de mesure</td></tr>`);
+        au-delà le contrat ne rapporte plus · ${p.csfloat_order
+          ? 'réglages du filtre ci-dessous' : 'filtre de float à régler pour '
+            + 'garder la sortie au même palier'} · répétable, 10 exemplaires en
+        ≈ 3,5 jours sur un filtre large (test réel, octobre 2026)</td></tr>`);
   } else if (p.float_subi_ok === false) {
     lignes.push(`<tr><td><b>Ordre d’achat ${revente}</b></td>
       <td class="num neg">impossible</td><td class="num">—</td>
@@ -1719,6 +1721,36 @@ function detailOrdres(p) {
     ${bloques ? `<p class="muted"><b>${bloques} ligne(s) sous le plancher de
       ${(p.order_floor ?? 0.03).toFixed(2).replace('.', ',')} de ${revente}</b> : aucun rabais ne peut les sauver, l’ordre ne
       serait jamais servi.</p>` : ''}
+  </details>`;
+}
+
+// Les reglages d'un ordre CSFloat, prets a recopier. Le plafond de float de
+// chaque skin a ete calcule a la main pour le premier test ; un plafond
+// normalise commun garde la sortie au palier quelle que soit l'entree recue.
+function detailOrdreCsfloat(p) {
+  const o = p.csfloat_order;
+  if (!o || !(o.skins || []).length) return '';
+  return `<details>
+    <summary>Poser un ordre sur CSFloat — ${o.skins.length} skin(s), au plus
+      ${o.max_price.toFixed(2)} l’unité</summary>
+    <p class="muted">Onglet <b>Advanced</b>, une règle par skin, reliées en
+    <b>OU</b> : tous donnent la même chance à chaque sortie, et un filtre large
+    se remplit plus vite — 10/10 en 84 h sur un filtre large, cinq fois plus
+    lent sur un filtre étroit (test réel, octobre 2026). Un float plus bas que
+    le plafond ne gêne jamais.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Skin</th><th class="num">Float min</th>
+        <th class="num">Float max</th><th>Usures couvertes</th></tr></thead>
+      <tbody>${o.skins.map(s => `<tr><td>${s.name}</td>
+        <td class="num">${s.float_min.toFixed(4)}</td>
+        <td class="num prof">${s.float_max.toFixed(4)}</td>
+        <td>${s.wears.join(', ')}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <p class="muted">Prix maximal <b>${o.max_price.toFixed(2)}</b> par entrée
+    pour viser +${Math.round(o.target_roi * 100)} %,
+    <b>${o.breakeven_price.toFixed(2)}</b> au point mort. Après une vente annulée
+    par le vendeur, vérifier la quantité restante : CSFloat la décompte quand
+    même.</p>
   </details>`;
 }
 

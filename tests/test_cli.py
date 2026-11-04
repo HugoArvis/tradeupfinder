@@ -422,6 +422,12 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
                  "order_price": 0.04, "below_floor": False},
             )
 
+        def csfloat_order_rules(self, target_roi=0.20):
+            return {"normalized_cap": 0.42, "max_price": 1.0,
+                    "breakeven_price": 1.2, "target_roi": target_roi,
+                    "skins": [{"name": "X", "float_min": 0.0,
+                               "float_max": 0.42, "wears": ["Factory New"]}]}
+
     d = cli._plan_payload(FauxPlan(), "EUR", 0.8779)
 
     assert d["currency"] == "EUR"
@@ -461,6 +467,11 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     # decide si un ordre peut etre place, pas celle du calcul.
     assert a["below_floor"] is False and b["below_floor"] is False
     assert b["order_price"] == pytest.approx(0.0351, abs=1e-4)
+    # L'ordre CSFloat : ses prix se convertissent, ses floats non.
+    o = d["csfloat_order"]
+    assert o["max_price"] == pytest.approx(0.8779)
+    assert o["breakeven_price"] == pytest.approx(1.2 * 0.8779, abs=1e-4)
+    assert o["normalized_cap"] == 0.42 and o["skins"][0]["float_max"] == 0.42
 
 
 # --- Devise de la commande plan ---------------------------------------------

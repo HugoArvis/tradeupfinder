@@ -450,6 +450,16 @@ def cmd_plan(args) -> int:
                   f"{plan.basket_profitability(panier):.0%}")
     else:
         print("\nAucun autre panier rentable dans les annonces lues.")
+    regles = plan.csfloat_order_rules()
+    if regles is not None:
+        print(f"\nORDRE CSFLOAT (Advanced, regles en OU) : au plus "
+              f"{m(regles['max_price']):.2f} par entree pour viser "
+              f"+{regles['target_roi']:.0%}, {m(regles['breakeven_price']):.2f} "
+              f"au point mort.")
+        for s in regles["skins"]:
+            print(f"  {s['name']:<40} float {s['float_min']:.4f} a "
+                  f"{s['float_max']:.4f}  ({', '.join(s['wears'])})")
+        print("  Un filtre large se remplit plus vite : garder tous les skins.")
     lent = plan.slowest_outcome
     if lent is not None:
         nom, st = lent

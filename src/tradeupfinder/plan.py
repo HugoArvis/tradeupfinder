@@ -592,6 +592,61 @@ class Plan:
             })
         return tuple(lignes)
 
+    def csfloat_order_rules(self, target_roi: float = 0.20) -> dict | None:
+        """Les reglages d'un ordre d'achat CSFloat a filtre de float.
+
+        Un plafond de float NORMALISE commun a toutes les entrees garde la
+        moyenne sous la limite du panier, donc les sorties a leur palier,
+        quelle que soit la combinaison recue. En mono-collection, chaque
+        entree pese alors pareil dans l'EV : un seul prix maximal vaut pour
+        tous les skins, et une regle en OU sur tous ceux de la rarete elargit
+        le filtre -- or la largeur du filtre decide du delai (test du
+        14 octobre 2026 : 10/10 en 84 h sur un filtre large, cinq fois plus
+        lent sur un filtre etroit).
+
+        Le plafond est la limite du panier, marge comprise ; un float plus
+        bas n'est jamais refuse. None pour un melange : les entrees des deux
+        collections n'y pesent pas pareil, une regle en OU fausserait la
+        repartition.
+        """
+        from .orders import arrondi_bas_centime
+
+        if self.remplissage is not None or self.float_budget is None:
+            return None
+        if self.collection is None or not self.result.ev_net:
+            return None
+        plafond = min(1.0, self.float_budget / TRADEUP_INPUT_COUNT)
+        if plafond <= 0:
+            return None
+        stattrak = self.result.stattrak
+        skins = []
+        for s in self.collection.by_rarity(self.rarity):
+            if stattrak and not s.stattrak:
+                continue
+            haut = s.min_float + plafond * s.float_span
+            usures = [w for w in s.available_wears() if w.lo < haut]
+            if not usures:
+                continue
+            skins.append({
+                "name": ("StatTrak™ " if stattrak else "") + s.name,
+                "float_min": round(s.min_float, 4),
+                # Arrondi vers le BAS : un float juste au-dessus du plafond
+                # ferait deriver la moyenne.
+                "float_max": int(haut * 10000) / 10000,
+                "wears": [w.label for w in usures],
+            })
+        if not skins:
+            return None
+        return {
+            "normalized_cap": round(plafond, 4),
+            "max_price": arrondi_bas_centime(
+                self.result.ev_net / TRADEUP_INPUT_COUNT / (1.0 + target_roi)),
+            "breakeven_price": arrondi_bas_centime(
+                self.result.ev_net / TRADEUP_INPUT_COUNT),
+            "target_roi": target_roi,
+            "skins": skins,
+        }
+
     @property
     def alt_profitability(self) -> float | None:
         """Profitabilite si l'on achetait sur le marche de revente."""
@@ -1417,6 +1472,11 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         }
 
     lignes = plan.steam_order_lines()
+    regles = plan.csfloat_order_rules()
+    if regles is not None:
+        # Les prix se convertissent, les floats non.
+        regles = {**regles, "max_price": c(regles["max_price"]),
+                  "breakeven_price": c(regles["breakeven_price"])}
     return {
         "collection": plan.nom,
         # Une meme collection donne un plan different par rarete : sans elle,
@@ -1450,6 +1510,8 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # Sorties probables dont le prix vient de flamber (ratio, 0.2 = +20 %).
         "rising_outcomes": [{"name": n, "rise": round(h, 3)}
                             for n, h in plan.sorties_en_hausse],
+        # Reglages d'un ordre CSFloat a filtre de float (None en melange).
+        "csfloat_order": regles,
         "outcomes_count": r.distinct_outcomes,
         "stdev": c(r.stdev),
         "avg_float": round(r.avg_input_float, 5),

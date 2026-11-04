@@ -1214,3 +1214,40 @@ def test_seules_les_sorties_probables_en_hausse_sont_signalees():
                            "Rare (Factory New)": {"ventes_jour": 5, "hausse": 0.9},
                            "Neuve (Factory New)": {"ventes_jour": 5, "hausse": None}})
     assert plan.sorties_en_hausse == [("Gonflee (Factory New)", 0.3)]
+
+
+def test_les_reglages_d_ordre_csfloat_partagent_un_plafond_normalise():
+    """Un plafond normalise commun garde la moyenne sous la limite du panier,
+    quelle que soit l'entree recue : chaque skin a son float max, un seul prix
+    vaut pour tous."""
+    from dataclasses import replace
+    from tradeupfinder.ev import InputItem, Outcome, TradeUpResult
+    from tradeupfinder.models import Collection
+    from tradeupfinder.plan import Plan
+
+    sortie = Skin(key="o", name="Sortie", collection_id="c", rarity=Rarity.RESTRICTED,
+                  min_float=0.0, max_float=1.0)
+    options = tuple(opt(1.0, 0.05) for _ in range(10))
+    result = TradeUpResult(
+        outcomes=(Outcome(skin=sortie, float_value=0.05, wear=Wear.FACTORY_NEW,
+                          probability=1.0, net_value=12.0, priced=True),),
+        inputs=tuple(InputItem(o.skin, o.float_value, o.unit_cost) for o in options),
+        cost=10.0, avg_input_float=0.05, avg_normalized=0.05, stattrak=False,
+        unpriced_probability=0.0, cliff_distance=0.01)
+    collection = Collection(id="c", name="C", skins=(SKIN, ETROIT, sortie))
+    plan = Plan(result=result, options=options, listings_examined=10,
+                collection=collection, rarity=Rarity.MIL_SPEC, float_budget=4.2)
+
+    regles = plan.csfloat_order_rules()
+    assert regles["normalized_cap"] == pytest.approx(0.42)
+    # 12 de revente pour 10 entrees : 1,20 au point mort, 1,00 pour +20 %.
+    assert regles["max_price"] == pytest.approx(1.00)
+    assert regles["breakeven_price"] == pytest.approx(1.20)
+    arme, etroit = regles["skins"]
+    assert (arme["float_min"], arme["float_max"]) == (0.0, 0.42)
+    assert arme["wears"] == ["Factory New", "Minimal Wear", "Field-Tested", "Well-Worn"]
+    # Range 0,10-0,50 : 0,10 + 0,42 x 0,40 = 0,268, MW et FT seulement.
+    assert (etroit["float_min"], etroit["float_max"]) == (0.10, 0.268)
+    assert etroit["wears"] == ["Minimal Wear", "Field-Tested"]
+    # Un melange : les entrees des deux collections ne pesent pas pareil.
+    assert replace(plan, remplissage=collection).csfloat_order_rules() is None
