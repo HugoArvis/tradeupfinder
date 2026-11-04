@@ -26,6 +26,7 @@ from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
 from .plan import (
     CHANCES_MIN,
+    FRAIS_RETRAIT,
     BudgetEpuise,
     SourceMemorisee,
     build_plan,
@@ -427,6 +428,11 @@ def cmd_plan(args) -> int:
 
     print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
           f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
+    retirable = plan.withdrawable(args.frais_retrait)
+    if retirable is not None:
+        print(f"  Retirable (frais de retrait {args.frais_retrait:.1%}) : "
+              f"{m(retirable[0]):+.2f} en reinvestissant la mise, "
+              f"{m(retirable[1]):+.2f} en retirant tout.")
     n_rep = contracts_for_significance(r)
     print(f"  Chances de gain {r.profit_probability:.0%}"
           + (f" ; avantage visible apres ~{n_rep} contrats." if n_rep else "."))
@@ -1842,6 +1848,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="generer une page HTML cliquable et l'ouvrir")
     s.add_argument("--no-open", action="store_true",
                    help="ecrire la page sans ouvrir le navigateur")
+    s.add_argument("--frais-retrait", type=float, default=FRAIS_RETRAIT,
+                   help="frais de retrait CSFloat (defaut 0.025, palier sous "
+                        "2 500 $ de ventes cumulees ; 0.005 au-dela de 100 000 $)")
     s.set_defaults(func=cmd_plan)
 
     s = sub.add_parser(

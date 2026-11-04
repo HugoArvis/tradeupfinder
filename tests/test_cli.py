@@ -422,6 +422,9 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
                  "order_price": 0.04, "below_floor": False},
             )
 
+        def withdrawable(self, fee=0.025):
+            return 2.0 * (1 - fee), 12.0 * (1 - fee) - 10.0
+
         def csfloat_order_rules(self, target_roi=0.20):
             return {"normalized_cap": 0.42, "max_price": 1.0,
                     "breakeven_price": 1.2, "target_roi": target_roi,
@@ -472,6 +475,10 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     assert o["max_price"] == pytest.approx(0.8779)
     assert o["breakeven_price"] == pytest.approx(1.2 * 0.8779, abs=1e-4)
     assert o["normalized_cap"] == 0.42 and o["skins"][0]["float_max"] == 0.42
+    # Le gain retirable : un montant, il se convertit ; le taux non.
+    assert d["withdrawable_profit"] == pytest.approx(1.95 * 0.8779, abs=1e-4)
+    assert d["withdrawable_all_out"] == pytest.approx(1.7 * 0.8779, abs=1e-4)
+    assert d["withdraw_fee"] == 0.025
 
 
 # --- Devise de la commande plan ---------------------------------------------

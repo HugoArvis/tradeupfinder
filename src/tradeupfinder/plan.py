@@ -379,6 +379,13 @@ class CSFloatPricer:
         return self._stats[name]
 
 
+#: Frais de retrait CSFloat vers la banque, palier le plus haut : 2,5 % sous
+#: 2 500 $ de ventes cumulees, degressif jusqu'a 0,5 % au-dela de 100 000 $.
+#: Releve le 4 novembre 2026 (sources tierces concordantes, la page officielle
+#: n'etant pas lisible sans navigateur) ; aucun frais de virement en plus.
+FRAIS_RETRAIT = 0.025
+
+
 @dataclass(frozen=True, slots=True)
 class Plan:
     """Un panier concret, achetable en l'etat."""
@@ -591,6 +598,21 @@ class Plan:
                 "below_floor": ordre < STEAM_MIN_PRICE,
             })
         return tuple(lignes)
+
+    def withdrawable(self, fee: float = FRAIS_RETRAIT) -> tuple[float, float] | None:
+        """Gain en argent sur le compte bancaire : (mise reinvestie, tout retire).
+
+        Le retrait ne frappe que ce qui sort. Qui reinvestit sa mise dans le
+        contrat suivant -- l'objectif de long terme -- ne retire que le gain,
+        et les frais ne deplacent ni le point mort ni le classement. Qui
+        retire tout paie aussi les frais sur la mise revenue. None si la
+        revente n'est pas sur CSFloat : l'argent Steam ne se retire pas.
+        """
+        if self.sell_market != "CSFloat":
+            return None
+        r = self.result
+        reinvesti = r.ev_profit * (1 - fee) if r.ev_profit > 0 else r.ev_profit
+        return reinvesti, r.ev_net * (1 - fee) - r.cost
 
     def csfloat_order_rules(self, target_roi: float = 0.20) -> dict | None:
         """Les reglages d'un ordre d'achat CSFloat a filtre de float.
@@ -1473,6 +1495,7 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
 
     lignes = plan.steam_order_lines()
     regles = plan.csfloat_order_rules()
+    retirable = plan.withdrawable()
     if regles is not None:
         # Les prix se convertissent, les floats non.
         regles = {**regles, "max_price": c(regles["max_price"]),
@@ -1512,6 +1535,11 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
                             for n, h in plan.sorties_en_hausse],
         # Reglages d'un ordre CSFloat a filtre de float (None en melange).
         "csfloat_order": regles,
+        # Gain une fois vire sur le compte (frais de retrait CSFloat) : mise
+        # reinvestie, puis tout retire. None hors revente CSFloat.
+        "withdrawable_profit": None if retirable is None else c(retirable[0]),
+        "withdrawable_all_out": None if retirable is None else c(retirable[1]),
+        "withdraw_fee": FRAIS_RETRAIT,
         "outcomes_count": r.distinct_outcomes,
         "stdev": c(r.stdev),
         "avg_float": round(r.avg_input_float, 5),

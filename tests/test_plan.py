@@ -1251,3 +1251,32 @@ def test_les_reglages_d_ordre_csfloat_partagent_un_plafond_normalise():
     assert etroit["wears"] == ["Minimal Wear", "Field-Tested"]
     # Un melange : les entrees des deux collections ne pesent pas pareil.
     assert replace(plan, remplissage=collection).csfloat_order_rules() is None
+
+
+def test_le_retrait_ne_frappe_que_ce_qui_sort():
+    """Mise reinvestie : seuls les gains paient le retrait. Tout retirer : la
+    mise aussi. L'argent Steam ne se retire pas du tout."""
+    from dataclasses import replace
+    from tradeupfinder.ev import InputItem, Outcome, TradeUpResult
+    from tradeupfinder.plan import Plan
+
+    sortie = Skin(key="o", name="Sortie", collection_id="c", rarity=Rarity.RESTRICTED,
+                  min_float=0.0, max_float=1.0)
+    options = tuple(opt(1.0, 0.05) for _ in range(10))
+
+    def plan(net):
+        result = TradeUpResult(
+            outcomes=(Outcome(skin=sortie, float_value=0.05, wear=Wear.FACTORY_NEW,
+                              probability=1.0, net_value=net, priced=True),),
+            inputs=tuple(InputItem(o.skin, o.float_value, o.unit_cost) for o in options),
+            cost=10.0, avg_input_float=0.05, avg_normalized=0.05, stattrak=False,
+            unpriced_probability=0.0, cliff_distance=0.01)
+        return Plan(result=result, options=options, listings_examined=10,
+                    collection=None)
+
+    reinvesti, tout = plan(12.0).withdrawable(0.025)
+    assert reinvesti == pytest.approx(2.0 * 0.975)
+    assert tout == pytest.approx(12.0 * 0.975 - 10.0)
+    # Une perte ne se retire pas : elle reste entiere, sans "frais negatifs".
+    assert plan(9.0).withdrawable(0.025)[0] == pytest.approx(-1.0)
+    assert replace(plan(12.0), sell_market="Steam").withdrawable() is None

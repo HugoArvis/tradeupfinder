@@ -1491,6 +1491,12 @@ function carte(p, planId, archive) {
       <span>gain <b class="pos">+${p.profit.toFixed(2)}</b></span>
       <span>chances de gagner
         <b>${((p.win_probability || 0) * 100).toFixed(0)}%</b></span>
+      ${p.withdrawable_profit !== null && p.withdrawable_profit !== undefined
+        ? `<span title="Après ${((p.withdraw_fee || 0) * 100).toFixed(1)} % de
+          frais de retrait CSFloat, mise réinvestie. En retirant tout :
+          ${(p.withdrawable_all_out || 0).toFixed(2)}.">retirable
+          <b>${p.withdrawable_profit >= 0 ? '+' : ''}${p.withdrawable_profit.toFixed(2)}</b></span>`
+        : ''}
       ${p.repetitions ? `<span title="Nombre de contrats pour que l'avantage
         se distingue du hasard (95 %). Un seul contrat reste un tirage.">à
         répéter <b>~${p.repetitions}×</b></span>` : ''}

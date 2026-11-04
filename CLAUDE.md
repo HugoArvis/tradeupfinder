@@ -655,6 +655,15 @@ possible (`sweep --sell-market steam`, `daily`) pour qui capitalise en monnaie
 Steam ; ne plus l'interroger supprime aussi ses 5 minutes d'attente par
 collection quand il refuse.
 
+**Le retrait CSFloat ne frappe que ce qui sort.** 2,5 % sous 2 500 $ de
+ventes cumulées, dégressif jusqu'à 0,5 % au-delà de 100 000 $, sans frais de
+virement (relevé le 4 novembre 2026 ; la page officielle des frais ne se lit
+pas sans navigateur, d'où `FRAIS_RETRAIT` et `plan --frais-retrait`). Il
+n'entre pas dans la valorisation : qui réinvestit sa mise ne retire que le
+gain, et 2,5 % d'un gain ne déplacent ni le point mort ni le classement.
+`Plan.withdrawable` donne les deux chiffres — mise réinvestie, tout retiré —
+et rien pour une revente Steam, dont l'argent ne se retire pas.
+
 **Le TTL se decide dans la SOURCE, pas dans le cache.** `QuoteCache`
 conserve tout ; a chaque lecture `SteamMarket`/`CSFloat` lui impose son propre
 `ttl_seconds` (6 h et 3 h par defaut). Tant que `--ttl` n'arrivait qu'au cache,
