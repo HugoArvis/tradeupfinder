@@ -277,6 +277,16 @@ abaissées. Origine : le guide 2026 de slyk (« ajuster les prix de sortie aux
 ventes récentes, pas aux annonces »), et le contrat Overpass annoncé à 131 %
 puis 107 %, arrivé à l'équilibre.
 
+**Une sortie qui se vend moins d'une fois par jour se brade.** Les mêmes ventes
+lues pour la liquidité signalent, sans requête de plus, chaque sortie d'au
+moins 10 % de probabilité (`PROBA_SORTIE_SIGNIFICATIVE`) vendue moins d'une
+fois par jour (`VENTES_JOUR_MIN`) : `Plan.sorties_peu_liquides`, alerte
+« Revente lente » dans l'application, marqueur `[REVENTE LENTE xN]` dans
+`sweep`. Le chiffre n'est pas corrigé — on ne sait pas de combien la décote
+d'une revente pressée dépasse les ~8 % mesurés —, il est annoncé. Une sortie
+improbable n'est pas signalée, une sortie sans données de ventes non plus :
+inconnu n'est pas lent.
+
 **Mais l'ignorer à l'ACHAT rend `scan` systématiquement optimiste**, et cette
 asymétrie est dangereuse : l'ignorer à la revente est prudent, l'ignorer à
 l'achat ne l'est pas. `build_options` retient le prix du palier tout en visant
