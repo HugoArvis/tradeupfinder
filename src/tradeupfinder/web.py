@@ -1424,6 +1424,12 @@ function carte(p, planId, archive) {
       point mort. Les annonces retenues sont les moins chères, donc les
       premières achetées par quiconque fait le même calcul.</div>`);
   }
+  if ((p.illiquid_outcomes || []).length) {
+    alertes.push(`<div class="warn"><b>Revente lente :</b>
+      ${p.illiquid_outcomes.map(o => `${o.name} (${o.per_day} vente/jour)`).join(', ')}.
+      Une sortie qui se vend rarement oblige à baisser son prix pour partir :
+      autour de 18 % de décote, le gain disparaît.</div>`);
+  }
   if (p.low_win_chance) {
     alertes.push(`<div class="warn"><b>Moins de 30 % de chances de gain.</b>
       Le gain moyen repose sur une issue rare : une série d'échecs est

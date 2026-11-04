@@ -1118,3 +1118,34 @@ def test_un_plan_a_issue_rare_est_signale():
     assert result.profit_probability == pytest.approx(0.2)
     assert d["low_win_chance"] is True
     assert d["repetitions"] > 10
+
+
+def test_seules_les_sorties_probables_et_lentes_sont_signalees():
+    """Une sortie qui se vend moins d'une fois par jour force une decote, mais
+    seulement si on a des chances de la tirer -- et inconnu n'est pas lent."""
+    from tradeupfinder.ev import InputItem, Outcome, TradeUpResult
+    from tradeupfinder.models import Collection
+    from tradeupfinder.plan import Plan
+
+    def sortie(cle, nom):
+        return Skin(key=cle, name=nom, collection_id="c", rarity=Rarity.RESTRICTED,
+                    min_float=0.0, max_float=1.0)
+
+    lente, rapide, rare, inconnue = (sortie("a", "Lente"), sortie("b", "Rapide"),
+                                     sortie("c", "Rare"), sortie("d", "Inconnue"))
+    issues = tuple(Outcome(skin=s, float_value=0.05, wear=Wear.FACTORY_NEW,
+                           probability=p, net_value=5.0, priced=True)
+                   for s, p in ((lente, 0.3), (rapide, 0.3), (rare, 0.05), (inconnue, 0.35)))
+    options = tuple(opt(1.0, 0.05) for _ in range(10))
+    result = TradeUpResult(
+        outcomes=issues,
+        inputs=tuple(InputItem(o.skin, o.float_value, o.unit_cost) for o in options),
+        cost=10.0, avg_input_float=0.05, avg_normalized=0.05, stattrak=False,
+        unpriced_probability=0.0, cliff_distance=0.01)
+    plan = Plan(result=result, options=options, listings_examined=10,
+                collection=Collection(id="c", name="C", skins=(SKIN,)),
+                liquidity={"Lente (Factory New)": {"ventes_jour": 0},
+                           "Rapide (Factory New)": {"ventes_jour": 6},
+                           "Rare (Factory New)": {"ventes_jour": 0},
+                           "Inconnue (Factory New)": None})
+    assert plan.sorties_peu_liquides == [("Lente (Factory New)", 0)]

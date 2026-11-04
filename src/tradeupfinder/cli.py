@@ -430,6 +430,8 @@ def cmd_plan(args) -> int:
     n_rep = contracts_for_significance(r)
     print(f"  Chances de gain {r.profit_probability:.0%}"
           + (f" ; avantage visible apres ~{n_rep} contrats." if n_rep else "."))
+    for nom_lent, par_jour in plan.sorties_peu_liquides:
+        print(f"  REVENTE LENTE : {nom_lent} ({par_jour} vente/jour sur CSFloat)")
     if r.profit_probability < CHANCES_MIN:
         print("  ATTENTION : moins de 30 % de chances de gain -- le gain moyen "
               "repose sur une issue rare.")
@@ -1586,6 +1588,8 @@ def _balayer(args) -> int:
         repli = f"  [repli CSFloat x{plan.replis}]" if plan.valorisation_de_repli else ""
         alt = (f"  [sur Steam : {plan.alt_profitability:.0%}]"
                if plan.alt_profitability is not None else "")
+        if plan.sorties_peu_liquides:
+            alt += f"  [REVENTE LENTE x{len(plan.sorties_peu_liquides)}]"
         if plan.fragile:
             alt += "  [FRAGILE : ne tient qu'en arrivant premier]"
         elif plan.deep_profitability is not None:

@@ -613,6 +613,25 @@ class Plan:
             return None
         return min(connus.items(), key=lambda kv: kv[1].get("ventes_jour", 0))
 
+    @property
+    def sorties_peu_liquides(self) -> list[tuple[str, int]]:
+        """Les sorties PROBABLES qui se vendent moins d'une fois par jour.
+
+        Guide de slyk, erreur n. 7 : une sortie qui ne se vend que rarement
+        force une decote pour partir, et la marge disparait -- or le seuil ou
+        le gain s'annule tourne autour de 18 % de decote (CLAUDE.md). Une
+        issue improbable ne compte pas : seules celles a 10 % ou plus. Une
+        sortie sans donnees n'est pas comptee : inconnu n'est pas lent.
+        """
+        lentes = []
+        for o in self.result.outcomes:
+            st = (self.liquidity or {}).get(o.name)
+            if not st or o.probability < PROBA_SORTIE_SIGNIFICATIVE:
+                continue
+            if st.get("ventes_jour", 0) < VENTES_JOUR_MIN:
+                lentes.append((o.name, st.get("ventes_jour", 0)))
+        return lentes
+
     # --- Ce qui compte vraiment : le pire cas couvre-t-il la mise ? ---
 
     @property
@@ -1056,6 +1075,13 @@ def _paniers_mixtes_suivants(opts_p, opts_r, plan):
     return tuple(paniers)
 
 
+#: Ventes par jour sur CSFloat sous lesquelles une sortie est dite peu liquide.
+VENTES_JOUR_MIN = 1
+
+#: Probabilite a partir de laquelle une sortie compte pour la liquidite.
+PROBA_SORTIE_SIGNIFICATIVE = 0.10
+
+
 #: Probabilite de gain sous laquelle un plan est signale. Guide 2026 de slyk :
 #: "au moins 30 % de chances de gain" -- en dessous, tout repose sur une issue
 #: rare, et une serie de dix echecs n'a rien d'improbable.
@@ -1368,6 +1394,9 @@ def plan_payload(plan: Plan, devise: str, conv=None) -> dict:
         # Combien de contrats pour que l'avantage se distingue du hasard
         # (95 %). None si le contrat n'a pas d'avantage.
         "repetitions": contracts_for_significance(r),
+        # Sorties probables qui se vendent moins d'une fois par jour.
+        "illiquid_outcomes": [{"name": n, "per_day": v}
+                              for n, v in plan.sorties_peu_liquides],
         "outcomes_count": r.distinct_outcomes,
         "stdev": c(r.stdev),
         "avg_float": round(r.avg_input_float, 5),
