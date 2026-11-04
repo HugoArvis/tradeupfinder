@@ -436,6 +436,10 @@ def test_le_payload_du_balayage_convertit_tous_les_montants():
     assert d["cost_deep"] == pytest.approx(9.6569)
     assert d["profitability_deep"] == pytest.approx(1.0909, abs=1e-4)
     assert d["fragile"] is False
+    # 80 % de chances de gain : pas d'alerte. Ecart-type 1, gain 2 : l'avantage
+    # se voit des (1,96 x 1 / 2)^2 = 0,96, soit 1 contrat.
+    assert d["low_win_chance"] is False
+    assert d["repetitions"] == 1
     # Les paniers suivants : cout et prix convertis, profitabilite non.
     (suivant,) = d["next_baskets"]
     assert suivant["cost"] == pytest.approx(10.0 * 0.8779)

@@ -139,6 +139,8 @@ const __cas = [
                  order_discount: null, order_lines: null }, 'abc', false)],
   ['carte, valorisee sur les ventes',
    () => carte({ ...__plan, valued_on_sales: 2 }, 'abc', false)],
+  ['carte, peu de chances de gain',
+   () => carte({ ...__plan, low_win_chance: true, repetitions: 48 }, 'abc', false)],
   ['carte, plan sans paniers suivants',
    () => carte({ ...__plan, next_baskets: undefined }, 'abc', false)],
   ['carte, aucun panier suivant',

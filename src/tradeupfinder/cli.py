@@ -25,6 +25,7 @@ from .pricing.cache import QuoteCache
 from .pricing.repository import MarketPricer
 from .pricing.steam import CURRENCIES, SteamMarket
 from .plan import (
+    CHANCES_MIN,
     BudgetEpuise,
     SourceMemorisee,
     build_plan,
@@ -426,6 +427,12 @@ def cmd_plan(args) -> int:
 
     print(f"\nCout {m(r.cost):.2f} | EV nette {m(r.ev_net):.2f} | "
           f"profit {m(r.ev_profit):+.2f} ({r.roi:+.1%})")
+    n_rep = contracts_for_significance(r)
+    print(f"  Chances de gain {r.profit_probability:.0%}"
+          + (f" ; avantage visible apres ~{n_rep} contrats." if n_rep else "."))
+    if r.profit_probability < CHANCES_MIN:
+        print("  ATTENTION : moins de 30 % de chances de gain -- le gain moyen "
+              "repose sur une issue rare.")
     if plan.sur_ventes:
         print(f"  {plan.sur_ventes} sortie(s) valorisee(s) a la mediane des ventes "
               f"recentes, plus basse que l'annonce la moins chere.")
